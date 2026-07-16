@@ -3,6 +3,7 @@ from __future__ import annotations
 from conftest import FakeEmbedding
 
 from vectorstore import (
+    AzureSqlVectorStore,
     Chunk,
     FaissVectorStore,
     NumpyVectorStore,
@@ -65,3 +66,7 @@ def test_empty_index_does_not_call_embedder() -> None:
 def test_builtin_store_factory() -> None:
     assert isinstance(create_store("numpy", dimension=4), NumpyVectorStore)
     assert isinstance(create_store("faiss", dimension=4), FaissVectorStore)
+    assert isinstance(
+        create_store("azure-sql", dimension=4, connection_factory=lambda: None),
+        AzureSqlVectorStore,
+    )

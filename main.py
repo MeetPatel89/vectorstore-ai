@@ -21,7 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--store",
-        choices=("chroma", "faiss", "numpy"),
+        choices=("azure-sql", "chroma", "faiss", "numpy"),
         default=os.environ.get("VECTORSTORE_BACKEND", "chroma"),
         help="storage backend (default: %(default)s; env: VECTORSTORE_BACKEND)",
     )
@@ -61,16 +61,19 @@ def main() -> int:
         print(f"No markdown files found under {CORPUS_ROOT}", file=sys.stderr)
         return 1
 
+    embedder = OpenAIEmbedding()
     if args.store == "chroma":
         store = create_store(
             "chroma",
             path=args.path,
             collection_name="nautilus-demo",
         )
+    elif args.store == "azure-sql":
+        store = create_store("azure-sql", dimension=embedder.dimension)
     else:
         store = create_store(args.store)
 
-    index = VectorIndex(OpenAIEmbedding(), store)
+    index = VectorIndex(embedder, store)
     print(f"Indexing {len(chunks)} documents with the {args.store} store...")
     index.index(chunks)
 

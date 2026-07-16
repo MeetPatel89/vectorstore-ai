@@ -4,6 +4,7 @@ from .embeddings import EmbeddingProvider, OpenAIEmbedding
 from .index import VectorIndex
 from .models import Chunk, MetadataFilter, MetadataValue, SearchResult
 from .stores import (
+    AzureSqlVectorStore,
     ChromaVectorStore,
     FaissVectorStore,
     NumpyVectorStore,
@@ -13,6 +14,7 @@ from .stores import (
 )
 
 __all__ = [
+    "AzureSqlVectorStore",
     "ChromaVectorStore",
     "Chunk",
     "EmbeddingProvider",

@@ -1,6 +1,6 @@
 # Vectorstore Implementation Plan
 
-A comprehensive, extensible vectorstore library for semantic search over pre-chunked data. First-class backends: **NumPy** (in-memory + file persistence), **FAISS** (in-memory + native index persistence), and **Chroma** (persistent local DB). Embeddings via **OpenAI**. Designed so new stores/embedders plug in behind small ABCs.
+A comprehensive, extensible vectorstore library for semantic search over pre-chunked data. First-class backends: **NumPy** (in-memory + file persistence), **FAISS** (in-memory + native index persistence), **Chroma** (persistent local DB), and **Azure SQL** (managed relational persistence with native vectors). Embeddings via **OpenAI**. Designed so new stores/embedders plug in behind small ABCs.
 
 ## Context and constraints
 
@@ -21,6 +21,7 @@ flowchart LR
     Store --> NumpyStore[NumpyVectorStore]
     Store --> FaissStore[FaissVectorStore]
     Store --> ChromaStore[ChromaVectorStore]
+    Store --> AzureSqlStore[AzureSqlVectorStore]
     Index --> Results[SearchResult list]
 ```
 
@@ -47,11 +48,13 @@ src/vectorstore/
     ├── registry.py      # create_store() factory + register_store()
     ├── numpy_store.py   # NumpyVectorStore
     ├── faiss_store.py   # FaissVectorStore
+    ├── azure_sql_store.py # AzureSqlVectorStore
     └── chroma_store.py  # ChromaVectorStore
 tests/
 ├── conftest.py          # FakeEmbedding, corpus fixtures
 ├── test_numpy_store.py
 ├── test_faiss_store.py
+├── test_azure_sql_store.py
 ├── test_chroma_store.py
 ├── test_stores_contract.py   # shared behavior suite parametrized over all stores
 └── test_index.py
@@ -136,7 +139,7 @@ Contract notes (encode these in the shared test suite):
 - `upsert` with an existing id replaces vector + text + metadata.
 - `search` returns results sorted by score descending, at most `k`, never includes deleted ids.
 - `delete` of a nonexistent id is a no-op.
-- Scores are cosine similarity for both backends so results are comparable.
+- Scores are cosine similarity for every backend so results are comparable.
 
 ### `stores/numpy_store.py`
 
@@ -162,6 +165,14 @@ Contract notes (encode these in the shared test suite):
 - Apply metadata filters before top-k by building a temporary flat index containing only eligible IDs.
 - `save(path)` writes `index.faiss`, `manifest.json`, and `chunks.json`; `FaissVectorStore.load(path)` validates dimensions, counts, and the persisted ID mapping.
 
+### `stores/azure_sql_store.py`
+
+- `AzureSqlVectorStore(dimension, connection_string=None, schema_name="dbo", table_name="vectorstore_chunks")` uses the native float32 `VECTOR` type and exact `VECTOR_DISTANCE('cosine', ...)` search.
+- Require dimensions from 1 to Azure SQL's stable float32 limit of 1,998 and validate the existing table through `sys.columns`.
+- Use Microsoft's optional `mssql-python` driver with passwordless Microsoft Entra connection strings; open a connection per operation and commit or roll back each mutation atomically.
+- Keep schema bootstrap explicit through `create_schema()` / `schema_sql`. Production runtime identities receive only SELECT, INSERT, UPDATE, and DELETE on the table; deployment identities own DDL.
+- Translate metadata filters to parameterized `OPENJSON` predicates before top-k. Validate schema/table identifiers and never interpolate user values or connection secrets into SQL.
+
 ### `stores/registry.py`
 
 ```python
@@ -173,9 +184,10 @@ def create_store(name: str, **kwargs) -> VectorStore: ...   # raises on unknown 
 register_store("numpy", NumpyVectorStore)
 register_store("chroma", ChromaVectorStore)
 register_store("faiss", FaissVectorStore)
+register_store("azure-sql", AzureSqlVectorStore)
 ```
 
-Import `chromadb` and `faiss` lazily inside their backend usage (optional-dependency friendly later).
+Import `chromadb`, `faiss`, and `mssql-python` lazily inside their backend usage.
 
 ### `index.py`
 
@@ -196,7 +208,7 @@ Deliberately thin — no chunking, no caching in v1.
 ## Demo (`main.py`)
 
 1. Walk `data/corpora/nautilus/raw/**/*.md`; each file becomes one `Chunk` (id = relative path, metadata = `{"doc_type": <parent folder name>}`). This is a stand-in for real ingestion.
-2. Build `VectorIndex(OpenAIEmbedding(), create_store("chroma", path=".chroma"))` (flag/env to pick `numpy` or `faiss`).
+2. Build `VectorIndex(OpenAIEmbedding(), create_store("chroma", path=".chroma"))` (flag/env to pick `numpy`, `faiss`, or `azure-sql`).
 3. Index, then run 2–3 sample queries (e.g. "users can't log in after certificate rotation", "payment export totals don't match dashboard") and print ranked results with scores, ids, and a text snippet — with and without a `doc_type` filter.
 4. Requires `OPENAI_API_KEY`; exit with a friendly message if unset.
 
@@ -207,12 +219,14 @@ Deliberately thin — no chunking, no caching in v1.
 - `test_numpy_store.py`: save/load round-trip, dimension validation on load.
 - `test_faiss_store.py`: save/load round-trip, dimension validation, empty indexes, and zero-vector handling.
 - `test_chroma_store.py`: persistence across client re-open, empty-metadata handling, `$and` translation with multi-key filters.
+- `test_azure_sql_store.py`: offline DB-API mocks covering DDL validation, transactions, exact search SQL, filter translation, connection cleanup, and permission-safe defaults.
 - `test_index.py`: `VectorIndex` end-to-end with `FakeEmbedding` + numpy store.
 
 ## Dependencies and setup
 
 ```bash
 uv add numpy "chromadb>=1.5.5" "faiss-cpu>=1.14.3" openai
+uv add --optional azure-sql "mssql-python>=1.11.0"
 uv add --dev pytest
 ```
 
@@ -231,9 +245,10 @@ Update `README.md`: install, `OPENAI_API_KEY` setup, quickstart snippet, running
 4. `stores/base.py` + `numpy_store.py` (+ save/load).
 5. `stores/faiss_store.py` (+ native index persistence).
 6. `stores/chroma_store.py` (+ filter translation).
-7. `stores/registry.py` + `index.py` + `__init__.py` exports.
-8. Tests (contract suite first, then backend-specific).
-9. Demo `main.py` + README.
+7. `stores/azure_sql_store.py` (+ connection lifecycle, schema bootstrap, SQL filter translation).
+8. `stores/registry.py` + `index.py` + `__init__.py` exports.
+9. Tests (contract suite first, then backend-specific).
+10. Demo `main.py` + README.
 
 ## Explicit non-goals for v1 (future seams)
 

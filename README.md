@@ -1,11 +1,12 @@
 # vectorstore-ai
 
 An extensible Python library for semantic search over pre-chunked text. It
-separates embedding from storage and ships with three cosine-similarity backends:
+separates embedding from storage and ships with four cosine-similarity backends:
 
 - `NumpyVectorStore`: exact in-memory search with file persistence.
 - `FaissVectorStore`: exact FAISS search with file persistence.
 - `ChromaVectorStore`: persistent local search through Chroma.
+- `AzureSqlVectorStore`: exact server-side search with Azure SQL native vectors.
 
 `VectorIndex` composes any store with an `EmbeddingProvider`. The included
 `OpenAIEmbedding` uses OpenAI's embeddings API, while tests can use any local or
@@ -17,6 +18,12 @@ Python 3.14 and [uv](https://docs.astral.sh/uv/) are required.
 
 ```bash
 uv sync
+```
+
+Azure SQL support uses Microsoft's optional driver:
+
+```bash
+uv sync --extra azure-sql
 ```
 
 For OpenAI embeddings, export an API key:
@@ -89,6 +96,25 @@ store = create_store(
 )
 ```
 
+For Azure SQL, use a passwordless Microsoft Entra connection string and the
+embedding dimension used by your provider:
+
+```bash
+export AZURE_SQL_CONNECTIONSTRING="Server=<server>.database.windows.net;Database=<database>;Authentication=ActiveDirectoryDefault;Encrypt=yes;TrustServerCertificate=no;"
+```
+
+```python
+from vectorstore import AzureSqlVectorStore
+
+store = AzureSqlVectorStore(dimension=1536)
+store.validate_schema()
+```
+
+Schema creation is deliberately separate from runtime access. See
+[Azure SQL setup](docs/AZURE_SQL.md) for table bootstrap, managed identity,
+least-privilege grants, firewall/private endpoint configuration, and production
+connection strings.
+
 ## Tests
 
 The full suite uses deterministic local embeddings and makes no API calls:
@@ -118,6 +144,12 @@ Or run the same demo with FAISS:
 uv run python main.py --store faiss
 ```
 
+Once the Azure SQL table and connection environment variable are configured:
+
+```bash
+uv run python main.py --store azure-sql
+```
+
 `VECTORSTORE_BACKEND` and `VECTORSTORE_PATH` can also set the backend and Chroma
-directory. The demo requires `OPENAI_API_KEY`; the library's offline tests do
-not.
+directory. `AZURE_SQL_CONNECTIONSTRING` configures the Azure SQL backend. The
+demo requires `OPENAI_API_KEY`; the library's offline tests do not.
