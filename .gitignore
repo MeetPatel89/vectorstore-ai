@@ -11,6 +11,7 @@ wheels/
 
 # Local vector databases
 .chroma/
+.faiss/
 .vectors/
 
 # misc

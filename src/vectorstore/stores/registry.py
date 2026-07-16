@@ -5,6 +5,7 @@ from typing import Any
 
 from .base import VectorStore
 from .chroma_store import ChromaVectorStore
+from .faiss_store import FaissVectorStore
 from .numpy_store import NumpyVectorStore
 
 StoreFactory = Callable[..., VectorStore]
@@ -37,3 +38,4 @@ def create_store(name: str, **kwargs: Any) -> VectorStore:
 
 register_store("numpy", NumpyVectorStore)
 register_store("chroma", ChromaVectorStore)
+register_store("faiss", FaissVectorStore)

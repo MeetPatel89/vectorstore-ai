@@ -1,6 +1,6 @@
 # Vectorstore Implementation Plan
 
-A comprehensive, extensible vectorstore library for semantic search over pre-chunked data. First-class backends: **NumPy** (in-memory + file persistence) and **Chroma** (persistent local DB). Embeddings via **OpenAI**. Designed so new stores/embedders plug in behind small ABCs.
+A comprehensive, extensible vectorstore library for semantic search over pre-chunked data. First-class backends: **NumPy** (in-memory + file persistence), **FAISS** (in-memory + native index persistence), and **Chroma** (persistent local DB). Embeddings via **OpenAI**. Designed so new stores/embedders plug in behind small ABCs.
 
 ## Context and constraints
 
@@ -19,6 +19,7 @@ flowchart LR
     Embedder --> OpenAIEmb[OpenAIEmbedding]
     Index --> Store[VectorStore ABC]
     Store --> NumpyStore[NumpyVectorStore]
+    Store --> FaissStore[FaissVectorStore]
     Store --> ChromaStore[ChromaVectorStore]
     Index --> Results[SearchResult list]
 ```
@@ -45,12 +46,14 @@ src/vectorstore/
     ├── base.py          # VectorStore ABC
     ├── registry.py      # create_store() factory + register_store()
     ├── numpy_store.py   # NumpyVectorStore
+    ├── faiss_store.py   # FaissVectorStore
     └── chroma_store.py  # ChromaVectorStore
 tests/
 ├── conftest.py          # FakeEmbedding, corpus fixtures
 ├── test_numpy_store.py
+├── test_faiss_store.py
 ├── test_chroma_store.py
-├── test_stores_contract.py   # shared behavior suite parametrized over both stores
+├── test_stores_contract.py   # shared behavior suite parametrized over all stores
 └── test_index.py
 main.py                  # demo over the nautilus corpus
 ```
@@ -151,6 +154,14 @@ Contract notes (encode these in the shared test suite):
 - Filter translation to Chroma `where`: equality maps to `{"key": {"$eq": v}}`, `$in`/comparisons map 1:1; multiple keys wrap in `{"$and": [...]}` (Chroma requires explicit `$and` for >1 condition).
 - `get`/`delete`/`count` map directly to collection methods. Persistence is inherent in `PersistentClient`.
 
+### `stores/faiss_store.py`
+
+- `FaissVectorStore(dimension=None)` wraps `faiss.IndexIDMap2(faiss.IndexFlatIP(dimension))` and infers the dimension on the first upsert when omitted.
+- Normalize stored vectors and queries before inner-product search so scores are cosine similarity in `[-1, 1]`.
+- Map public string chunk IDs to stable internal `int64` FAISS IDs. Replacement upserts remove and re-add the same internal ID; deletes do not affect other IDs.
+- Apply metadata filters before top-k by building a temporary flat index containing only eligible IDs.
+- `save(path)` writes `index.faiss`, `manifest.json`, and `chunks.json`; `FaissVectorStore.load(path)` validates dimensions, counts, and the persisted ID mapping.
+
 ### `stores/registry.py`
 
 ```python
@@ -161,9 +172,10 @@ def create_store(name: str, **kwargs) -> VectorStore: ...   # raises on unknown 
 
 register_store("numpy", NumpyVectorStore)
 register_store("chroma", ChromaVectorStore)
+register_store("faiss", FaissVectorStore)
 ```
 
-Import `chromadb` lazily inside `chroma_store.py` usage so the numpy path works without chroma installed (optional-dependency friendly later).
+Import `chromadb` and `faiss` lazily inside their backend usage (optional-dependency friendly later).
 
 ### `index.py`
 
@@ -184,22 +196,23 @@ Deliberately thin — no chunking, no caching in v1.
 ## Demo (`main.py`)
 
 1. Walk `data/corpora/nautilus/raw/**/*.md`; each file becomes one `Chunk` (id = relative path, metadata = `{"doc_type": <parent folder name>}`). This is a stand-in for real ingestion.
-2. Build `VectorIndex(OpenAIEmbedding(), create_store("chroma", path=".chroma"))` (flag/env to pick `numpy`).
+2. Build `VectorIndex(OpenAIEmbedding(), create_store("chroma", path=".chroma"))` (flag/env to pick `numpy` or `faiss`).
 3. Index, then run 2–3 sample queries (e.g. "users can't log in after certificate rotation", "payment export totals don't match dashboard") and print ranked results with scores, ids, and a text snippet — with and without a `doc_type` filter.
 4. Requires `OPENAI_API_KEY`; exit with a friendly message if unset.
 
 ## Tests (offline, no API)
 
 - `FakeEmbedding` in `conftest.py`: deterministic, e.g. hash tokens into a small fixed-dim bag-of-words vector, so "similar" texts sharing words score higher. Never calls the network.
-- `test_stores_contract.py`: one parametrized suite run against both `NumpyVectorStore` and `ChromaVectorStore(tmp_path)` covering: upsert/replace semantics, delete (incl. nonexistent id), search ordering + top-k, every filter operator, empty-store search, `get`/`count`.
+- `test_stores_contract.py`: one parametrized suite run against `NumpyVectorStore`, `FaissVectorStore`, and `ChromaVectorStore(tmp_path)` covering: upsert/replace semantics, delete (incl. nonexistent id), search ordering + top-k, every filter operator, empty-store search, `get`/`count`.
 - `test_numpy_store.py`: save/load round-trip, dimension validation on load.
+- `test_faiss_store.py`: save/load round-trip, dimension validation, empty indexes, and zero-vector handling.
 - `test_chroma_store.py`: persistence across client re-open, empty-metadata handling, `$and` translation with multi-key filters.
 - `test_index.py`: `VectorIndex` end-to-end with `FakeEmbedding` + numpy store.
 
 ## Dependencies and setup
 
 ```bash
-uv add numpy "chromadb>=1.5.5" openai
+uv add numpy "chromadb>=1.5.5" "faiss-cpu>=1.14.3" openai
 uv add --dev pytest
 ```
 
@@ -216,10 +229,11 @@ Update `README.md`: install, `OPENAI_API_KEY` setup, quickstart snippet, running
 2. `models.py` (Chunk, SearchResult, filter helper `matches()`).
 3. `embeddings/base.py` + `openai.py`.
 4. `stores/base.py` + `numpy_store.py` (+ save/load).
-5. `stores/chroma_store.py` (+ filter translation).
-6. `stores/registry.py` + `index.py` + `__init__.py` exports.
-7. Tests (contract suite first, then backend-specific).
-8. Demo `main.py` + README.
+5. `stores/faiss_store.py` (+ native index persistence).
+6. `stores/chroma_store.py` (+ filter translation).
+7. `stores/registry.py` + `index.py` + `__init__.py` exports.
+8. Tests (contract suite first, then backend-specific).
+9. Demo `main.py` + README.
 
 ## Explicit non-goals for v1 (future seams)
 

@@ -5,7 +5,12 @@ import re
 
 import pytest
 
-from vectorstore import ChromaVectorStore, EmbeddingProvider, NumpyVectorStore
+from vectorstore import (
+    ChromaVectorStore,
+    EmbeddingProvider,
+    FaissVectorStore,
+    NumpyVectorStore,
+)
 
 
 class FakeEmbedding(EmbeddingProvider):
@@ -37,11 +42,13 @@ class FakeEmbedding(EmbeddingProvider):
         return vector
 
 
-@pytest.fixture(params=["numpy", "chroma"])
+@pytest.fixture(params=["numpy", "chroma", "faiss"])
 def store(request: pytest.FixtureRequest, tmp_path):
     if request.param == "numpy":
         return NumpyVectorStore()
-    return ChromaVectorStore(
-        path=tmp_path / "chroma",
-        collection_name="contract-tests",
-    )
+    if request.param == "chroma":
+        return ChromaVectorStore(
+            path=tmp_path / "chroma",
+            collection_name="contract-tests",
+        )
+    return FaissVectorStore()

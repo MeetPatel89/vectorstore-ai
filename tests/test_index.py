@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from conftest import FakeEmbedding
 
-from vectorstore import Chunk, NumpyVectorStore, VectorIndex, create_store
+from vectorstore import (
+    Chunk,
+    FaissVectorStore,
+    NumpyVectorStore,
+    VectorIndex,
+    create_store,
+)
 
 
 def test_index_end_to_end() -> None:
@@ -58,3 +64,4 @@ def test_empty_index_does_not_call_embedder() -> None:
 
 def test_builtin_store_factory() -> None:
     assert isinstance(create_store("numpy", dimension=4), NumpyVectorStore)
+    assert isinstance(create_store("faiss", dimension=4), FaissVectorStore)

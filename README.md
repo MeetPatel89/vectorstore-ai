@@ -1,12 +1,13 @@
 # vectorstore-ai
 
 An extensible Python library for semantic search over pre-chunked text. It
-separates embedding from storage and ships with two cosine-similarity backends:
+separates embedding from storage and ships with three cosine-similarity backends:
 
 - `NumpyVectorStore`: exact in-memory search with file persistence.
+- `FaissVectorStore`: exact FAISS search with file persistence.
 - `ChromaVectorStore`: persistent local search through Chroma.
 
-`VectorIndex` composes either store with an `EmbeddingProvider`. The included
+`VectorIndex` composes any store with an `EmbeddingProvider`. The included
 `OpenAIEmbedding` uses OpenAI's embeddings API, while tests can use any local or
 fake implementation of the small provider interface.
 
@@ -66,6 +67,18 @@ store.save(".vectors")
 store = NumpyVectorStore.load(".vectors")
 ```
 
+FAISS uses the same explicit persistence pattern and stores a native FAISS
+index alongside its chunk data and string-ID mapping:
+
+```python
+from vectorstore import FaissVectorStore
+
+store = create_store("faiss")
+# ...index chunks through VectorIndex...
+store.save(".faiss")
+store = FaissVectorStore.load(".faiss")
+```
+
 For automatic local persistence, create Chroma with a directory and collection:
 
 ```python
@@ -97,6 +110,12 @@ Chroma is the default. To use the in-memory NumPy backend instead:
 
 ```bash
 uv run python main.py --store numpy
+```
+
+Or run the same demo with FAISS:
+
+```bash
+uv run python main.py --store faiss
 ```
 
 `VECTORSTORE_BACKEND` and `VECTORSTORE_PATH` can also set the backend and Chroma
