@@ -1,16 +1,37 @@
 """High-level composition of embedding and storage."""
 
-from vectorstore.embeddings.base import EmbeddingProvider
+from vectorstore.embeddings.base import EmbeddingProvider, EmbeddingSpec
 from vectorstore.models import Chunk, MetadataFilter, SearchResult
 from vectorstore.stores.base import VectorStore
 
 
 class VectorIndex:
-    """The primary API for indexing chunks and searching them by text."""
+    """The primary API for indexing chunks and searching them by text.
+
+    A ``VectorIndex`` is bound to exactly one embedding space: the space of
+    its embedding provider. At construction it rejects stores whose
+    established dimension does not match the provider, so vectors from
+    different embedding models can never be compared against one another.
+    """
 
     def __init__(self, embedder: EmbeddingProvider, store: VectorStore) -> None:
+        spec = embedder.spec
+        store_dimension = store.dimension
+        if store_dimension is not None and store_dimension != spec.dimension:
+            raise ValueError(
+                f"embedding space {spec.space_id!r} produces "
+                f"{spec.dimension}-dimensional vectors but the store expects "
+                f"{store_dimension}; use one store per embedding space"
+            )
         self.embedder = embedder
         self.store = store
+        self._spec = spec
+
+    @property
+    def spec(self) -> EmbeddingSpec:
+        """The embedding space this index reads from and writes to."""
+
+        return self._spec
 
     def index(self, chunks: list[Chunk]) -> None:
         if not chunks:

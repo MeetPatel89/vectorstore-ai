@@ -1722,8 +1722,6 @@ name = "vectorstore-ai"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "chromadb" },
-    { name = "faiss-cpu" },
     { name = "numpy" },
     { name = "openai" },
 ]
@@ -1732,24 +1730,36 @@ dependencies = [
 azure-sql = [
     { name = "mssql-python" },
 ]
+chroma = [
+    { name = "chromadb" },
+]
+faiss = [
+    { name = "faiss-cpu" },
+]
 
 [package.dev-dependencies]
 dev = [
+    { name = "chromadb" },
+    { name = "faiss-cpu" },
     { name = "pytest" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "chromadb", specifier = ">=1.5.5" },
-    { name = "faiss-cpu", specifier = ">=1.14.3" },
+    { name = "chromadb", marker = "extra == 'chroma'", specifier = ">=1.5.5" },
+    { name = "faiss-cpu", marker = "extra == 'faiss'", specifier = ">=1.14.3" },
     { name = "mssql-python", marker = "extra == 'azure-sql'", specifier = ">=1.11.0" },
     { name = "numpy", specifier = ">=2.1" },
     { name = "openai", specifier = ">=1.0" },
 ]
-provides-extras = ["azure-sql"]
+provides-extras = ["chroma", "faiss", "azure-sql"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8.0" }]
+dev = [
+    { name = "chromadb", specifier = ">=1.5.5" },
+    { name = "faiss-cpu", specifier = ">=1.14.3" },
+    { name = "pytest", specifier = ">=8.0" },
+]
 
 [[package]]
 name = "watchfiles"

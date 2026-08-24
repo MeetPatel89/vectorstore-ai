@@ -6,7 +6,7 @@ import os
 from collections.abc import Sequence
 from typing import Any
 
-from .base import EmbeddingProvider
+from .base import EmbeddingProvider, EmbeddingSpec
 
 _MODEL_DIMENSIONS = {
     "text-embedding-3-small": 1536,
@@ -23,6 +23,7 @@ class OpenAIEmbedding(EmbeddingProvider):
         api_key: str | None = None,
         batch_size: int = 128,
         dimensions: int | None = None,
+        version: str = "v1",
     ) -> None:
         if batch_size <= 0:
             raise ValueError("batch_size must be greater than zero")
@@ -45,9 +46,19 @@ class OpenAIEmbedding(EmbeddingProvider):
         self.model = model
         self.batch_size = batch_size
         self.dimensions = dimensions
+        self.version = version
         # The SDK retries rate limits, connection failures, and transient server
         # errors with exponential backoff while keeping this provider thin.
         self._client = OpenAI(api_key=resolved_key, max_retries=2)
+
+    @property
+    def spec(self) -> EmbeddingSpec:
+        return EmbeddingSpec(
+            provider="openai",
+            model=self.model,
+            dimension=self.dimension,
+            version=self.version,
+        )
 
     @property
     def dimension(self) -> int:

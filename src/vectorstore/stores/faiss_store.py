@@ -332,5 +332,8 @@ def _import_faiss() -> Any:
     try:
         import faiss
     except ImportError as exc:  # pragma: no cover - dependency is declared
-        raise ImportError("FaissVectorStore requires faiss-cpu>=1.14.3") from exc
+        raise ImportError(
+            "FaissVectorStore requires the 'faiss' extra "
+            "(faiss-cpu>=1.14.3); install it with `uv sync --extra faiss`"
+        ) from exc
     return faiss

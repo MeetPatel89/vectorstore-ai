@@ -5,13 +5,17 @@ description = "An extensible vector store library for semantic search"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "chromadb>=1.5.5",
-    "faiss-cpu>=1.14.3",
     "numpy>=2.1",
     "openai>=1.0",
 ]
 
 [project.optional-dependencies]
+chroma = [
+    "chromadb>=1.5.5",
+]
+faiss = [
+    "faiss-cpu>=1.14.3",
+]
 azure-sql = [
     "mssql-python>=1.11.0",
 ]
@@ -19,6 +23,8 @@ azure-sql = [
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "chromadb>=1.5.5",
+    "faiss-cpu>=1.14.3",
 ]
 
 [build-system]

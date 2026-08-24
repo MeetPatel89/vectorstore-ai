@@ -12,18 +12,32 @@ separates embedding from storage and ships with four cosine-similarity backends:
 `OpenAIEmbedding` uses OpenAI's embeddings API, while tests can use any local or
 fake implementation of the small provider interface.
 
+Every provider declares an `EmbeddingSpec` (provider, model, dimension,
+version) identifying its embedding space. A `VectorIndex` is bound to exactly
+one space and rejects stores with an incompatible dimension, so vectors from
+different embedding models are never compared against one another. Use one
+store (collection, table, or directory) per `spec.space_id`.
+
+For ingestion, `Record` separates a source row's semantic fields from its
+structured attributes; `semantic_projection()` renders only the semantic
+fields into indexable text, and `content_hash()` supports skipping
+re-embedding of unchanged content.
+
 ## Install
 
-Python 3.14 and [uv](https://docs.astral.sh/uv/) are required.
+Python 3.14 and [uv](https://docs.astral.sh/uv/) are required. The core
+install ships the NumPy store and OpenAI embeddings:
 
 ```bash
 uv sync
 ```
 
-Azure SQL support uses Microsoft's optional driver:
+The other backends are optional extras:
 
 ```bash
-uv sync --extra azure-sql
+uv sync --extra chroma      # ChromaVectorStore
+uv sync --extra faiss       # FaissVectorStore
+uv sync --extra azure-sql   # AzureSqlVectorStore (Microsoft's driver)
 ```
 
 For OpenAI embeddings, export an API key:
@@ -132,7 +146,8 @@ chunk, indexes the corpus, and runs sample searches:
 uv run python main.py
 ```
 
-Chroma is the default. To use the in-memory NumPy backend instead:
+Chroma is the default (requires the `chroma` extra). To use the in-memory
+NumPy backend instead:
 
 ```bash
 uv run python main.py --store numpy

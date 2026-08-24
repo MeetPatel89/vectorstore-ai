@@ -1,6 +1,6 @@
 """Embedding providers."""
 
-from .base import EmbeddingProvider
+from .base import EmbeddingProvider, EmbeddingSpec
 from .openai import OpenAIEmbedding
 
-__all__ = ["EmbeddingProvider", "OpenAIEmbedding"]
+__all__ = ["EmbeddingProvider", "EmbeddingSpec", "OpenAIEmbedding"]

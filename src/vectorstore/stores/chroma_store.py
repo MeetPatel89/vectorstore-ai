@@ -24,7 +24,8 @@ class ChromaVectorStore(VectorStore):
             import chromadb
         except ImportError as exc:  # pragma: no cover - dependency is declared
             raise ImportError(
-                "ChromaVectorStore requires chromadb>=1.5.5"
+                "ChromaVectorStore requires the 'chroma' extra "
+                "(chromadb>=1.5.5); install it with `uv sync --extra chroma`"
             ) from exc
 
         self.path = str(path)

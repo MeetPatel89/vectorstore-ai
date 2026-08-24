@@ -8,6 +8,7 @@ import pytest
 from vectorstore import (
     ChromaVectorStore,
     EmbeddingProvider,
+    EmbeddingSpec,
     FaissVectorStore,
     NumpyVectorStore,
 )
@@ -22,8 +23,12 @@ class FakeEmbedding(EmbeddingProvider):
         self.query_calls: list[str] = []
 
     @property
-    def dimension(self) -> int:
-        return self._dimension
+    def spec(self) -> EmbeddingSpec:
+        return EmbeddingSpec(
+            provider="fake",
+            model="hashed-bow",
+            dimension=self._dimension,
+        )
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         self.document_calls.append(texts)
