@@ -17,16 +17,23 @@ from vectorstore import (
 class FakeEmbedding(EmbeddingProvider):
     """A deterministic hashed bag-of-words embedder for offline tests."""
 
-    def __init__(self, dimension: int = 64) -> None:
+    def __init__(
+        self,
+        dimension: int = 64,
+        provider: str = "fake",
+        model: str = "hashed-bow",
+    ) -> None:
         self._dimension = dimension
+        self._provider = provider
+        self._model = model
         self.document_calls: list[list[str]] = []
         self.query_calls: list[str] = []
 
     @property
     def spec(self) -> EmbeddingSpec:
         return EmbeddingSpec(
-            provider="fake",
-            model="hashed-bow",
+            provider=self._provider,
+            model=self._model,
             dimension=self._dimension,
         )
 

@@ -23,6 +23,56 @@ structured attributes; `semantic_projection()` renders only the semantic
 fields into indexable text, and `content_hash()` supports skipping
 re-embedding of unchanged content.
 
+## Embedding providers and fallback policy
+
+Two providers ship with the library:
+
+- `OpenAIEmbedding` (primary): OpenAI's embeddings API, default
+  `text-embedding-3-small`.
+- `SentenceTransformerEmbedding` (fallback, extra `local`): a locally hosted
+  Sentence Transformers model, default `all-MiniLM-L6-v2` (384 dimensions,
+  L2-normalized). The model loads lazily on first use.
+
+`EmbeddingRouter` deterministically picks one of them per call and returns a
+`ProviderSelection` with a machine-readable `SelectionReason`:
+
+1. `manual_override` — `force_primary` / `force_fallback` configuration.
+2. `openai_disabled` — primary disabled in configuration.
+3. `openai_unavailable` / `openai_rate_limited` — the built-in
+   `CircuitBreaker` is open after consecutive failures or during a 429
+   backoff window.
+4. `budget_daily_exceeded` / `budget_monthly_exceeded` — the `BudgetLedger`
+   shows `spent + estimated cost > budget`.
+5. `primary` — otherwise.
+
+```python
+from vectorstore import (
+    EmbeddingRouter,
+    InMemoryBudgetLedger,
+    OpenAIEmbedding,
+    SentenceTransformerEmbedding,
+)
+
+router = EmbeddingRouter(
+    OpenAIEmbedding(),
+    SentenceTransformerEmbedding(),
+    ledger=InMemoryBudgetLedger(),
+    daily_budget_usd=0.50,
+)
+
+selection = router.select("query", texts=["how do I rotate certificates?"])
+vector = selection.provider.embed_query("how do I rotate certificates?")
+# selection.spec.space_id tells you which vector index to search;
+# spaces are never mixed.
+
+router.record_usage(tokens=12)   # feed the ledger after successful calls
+router.record_failure()          # feed the circuit breaker on errors
+```
+
+Because the two providers occupy different embedding spaces, keep one vector
+store per `spec.space_id` and route queries to the store matching the
+selected provider.
+
 ## Install
 
 Python 3.14 and [uv](https://docs.astral.sh/uv/) are required. The core
@@ -38,6 +88,7 @@ The other backends are optional extras:
 uv sync --extra chroma      # ChromaVectorStore
 uv sync --extra faiss       # FaissVectorStore
 uv sync --extra azure-sql   # AzureSqlVectorStore (Microsoft's driver)
+uv sync --extra local       # SentenceTransformerEmbedding (torch + sentence-transformers)
 ```
 
 For OpenAI embeddings, export an API key:
@@ -136,6 +187,9 @@ The full suite uses deterministic local embeddings and makes no API calls:
 ```bash
 uv run pytest
 ```
+
+Tests marked `local_model` load the real MiniLM model; they skip
+automatically unless the `local` extra is installed.
 
 ## Demo
 

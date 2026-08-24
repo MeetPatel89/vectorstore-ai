@@ -19,6 +19,10 @@ faiss = [
 azure-sql = [
     "mssql-python>=1.11.0",
 ]
+local = [
+    "sentence-transformers>=5.0",
+    "torch>=2.9",
+]
 
 [dependency-groups]
 dev = [
@@ -36,3 +40,6 @@ packages = ["src/vectorstore"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "local_model: loads a real sentence-transformers model (requires the 'local' extra)",
+]
