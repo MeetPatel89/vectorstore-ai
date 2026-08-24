@@ -73,6 +73,71 @@ Because the two providers occupy different embedding spaces, keep one vector
 store per `spec.space_id` and route queries to the store matching the
 selected provider.
 
+## Document catalog (structured find, lexical search, ledgers)
+
+`SqliteDocumentCatalog` (standard library only, zero extra dependencies) is
+the system of record for searchable documents. It owns everything except the
+dense vectors themselves, which stay in per-space vector stores:
+
+- **Structured retrieval**: `find(filter, scope, limit)` queries documents by
+  their natural attributes (`doc_type`, `status`, `tenant_id`, ...) plus any
+  custom attributes, using the same filter syntax as vector search. Filters
+  are pushed down into SQL (`json_extract` for custom attributes).
+- **Lexical retrieval**: `search_lexical(query, k, filter, scope)` uses an
+  FTS5 index over chunk text with BM25 ranking, kept in sync with the chunk
+  rows by triggers in the same transaction. Raw user queries are sanitized
+  into safe MATCH expressions; quoted phrases become phrase queries. Exact
+  identifiers like `INC-1104` or `SQLSTATE 23505` are first-class here.
+  If FTS5 is unavailable, a typed `LexicalUnavailableError` lets callers
+  degrade to dense + structured retrieval.
+- **Embedding lifecycle ledger**: `mark_embedded(chunk_id, spec, hash)`
+  records which vector exists per (chunk, embedding space);
+  `stale_chunk_ids(spec)` returns chunks whose vector is missing or was
+  built from outdated content, so re-embedding is incremental.
+- **Durable budget ledger**: the catalog satisfies the `BudgetLedger`
+  protocol, so it can be passed directly to an `EmbeddingRouter` for spend
+  tracking that survives restarts.
+
+Authorization is a `RetrievalScope(tenant_id, visibility)` enforced inside
+the SQL of every candidate generator — never by post-filtering:
+
+```python
+from vectorstore import (
+    CatalogChunk,
+    CatalogDocument,
+    RetrievalScope,
+    SqliteDocumentCatalog,
+)
+
+catalog = SqliteDocumentCatalog("corpus.db")
+catalog.upsert_documents([
+    CatalogDocument(
+        doc_id="INC-1104",
+        title="Payment reporting data missing",
+        doc_type="incident",
+        tenant_id="acme",
+        visibility="internal",
+        status="OPEN",
+        attributes={"severity": 3},
+    ),
+])
+catalog.upsert_chunks([
+    CatalogChunk(
+        chunk_id="INC-1104:0",
+        doc_id="INC-1104",
+        text="Incident: INC-1104\nDescription: reconciliation reports are empty",
+    ),
+])
+
+scope = RetrievalScope(tenant_id="acme", visibility=("internal", "public"))
+open_incidents = catalog.find({"status": "OPEN", "severity": {"$gte": 2}}, scope)
+hits = catalog.search_lexical("INC-1104", k=5, scope=scope)
+chunks = catalog.get_chunks([hit.chunk_id for hit in hits])
+```
+
+Documents without a `tenant_id` are shared across tenants; documents without
+a `visibility` label are visible to every scope.
+
 ## Install
 
 Python 3.14 and [uv](https://docs.astral.sh/uv/) are required. The core
