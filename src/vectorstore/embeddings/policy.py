@@ -261,6 +261,14 @@ class EmbeddingRouter:
             )
 
     @property
+    def primary(self) -> EmbeddingProvider:
+        return self._primary
+
+    @property
+    def fallback(self) -> EmbeddingProvider | None:
+        return self._fallback
+
+    @property
     def ledger(self) -> BudgetLedger:
         return self._ledger
 

@@ -138,6 +138,85 @@ chunks = catalog.get_chunks([hit.chunk_id for hit in hits])
 Documents without a `tenant_id` are shared across tenants; documents without
 a `visibility` label are visible to every scope.
 
+## Hybrid retrieval (the primary API)
+
+`Retriever` orchestrates all three retrieval signals over one catalog and
+per-space vector stores, and `build_retriever()` composes it:
+
+```python
+from vectorstore import (
+    NumpyVectorStore,
+    OpenAIEmbedding,
+    RetrievalScope,
+    SentenceTransformerEmbedding,
+    build_retriever,
+)
+
+primary = OpenAIEmbedding()
+fallback = SentenceTransformerEmbedding()
+
+retriever = build_retriever(
+    catalog,                             # also serves as the durable budget ledger
+    primary=primary,
+    primary_store=NumpyVectorStore(),    # 1536-dim space
+    fallback=fallback,
+    fallback_store=NumpyVectorStore(),   # 384-dim space, never mixed
+    daily_budget_usd=0.50,
+)
+
+scope = RetrievalScope(tenant_id="acme", visibility=("internal", "public"))
+result = retriever.retrieve(
+    "reconciliation reports are empty",
+    filter={"doc_type": "incident"},
+    scope=scope,
+)
+for hit in result.hits:
+    print(hit.score, hit.chunk.chunk_id, hit.dense_rank, hit.lexical_rank)
+
+open_incidents = retriever.find({"status": "OPEN"}, scope)  # structured only
+```
+
+One `retrieve()` call runs, in order:
+
+1. **Query analysis** — a deterministic `QueryAnalyzer` (regex, no LLM)
+   classifies the query. Identifier queries (`INC-1104`, `SQLSTATE 23505`,
+   `ERR_CONNECTION_RESET`) and quoted phrases up-weight the lexical signal;
+   ordinary natural-language queries weight both signals equally.
+2. **Dense branch** — the `EmbeddingRouter` selects a provider (with a
+   reason code), and the query embedding searches only that provider's
+   space. If the primary provider fails mid-request, the failure feeds the
+   circuit breaker and the fallback space is tried within the same request.
+3. **Lexical branch** — `search_lexical` on the catalog, complementary to
+   dense retrieval, not a fallback.
+4. **Fusion** — weighted Reciprocal Rank Fusion
+   (`score = w / (k + rank)`, `k = 60`) over the two ranked ID lists; only
+   ranks are combined, never raw cosine/BM25 scores. Ties break by chunk ID
+   so results are deterministic. The `rrf()` function is also exported
+   directly.
+
+`scope` is enforced inside candidate generation on both branches: SQL for
+lexical, metadata-filter pushdown for dense. The dense pushdown is
+deliberately conservative — chunks ingested without `tenant_id`/`visibility`
+metadata are excluded from scoped dense search rather than treated as
+shared.
+
+Retrieval degrades instead of failing while any signal remains: no usable
+provider or store means lexical + structured still serve; a missing FTS
+index means dense + structured still serve; `retriever.find()` always
+works. Every `RetrievalResult` carries full provenance — `query_kind`,
+`provider`, `provider_reason`, `fallback_occurred`, `degraded`, per-signal
+ranks on each hit, phase timings, and error summaries — which is what the
+evaluation plan consumes to compare dense/lexical/hybrid arms.
+
+### Observability
+
+Pass any object with an `on_retrieve(result)` method as
+`build_retriever(..., observer=...)` to receive one `RetrievalResult` per
+request. The `RetrievalTraceObserver` protocol is dependency-free and the
+result carries no query or document text, so observers are content-safe by
+default; observer exceptions are swallowed so telemetry can never break
+retrieval.
+
 ## Install
 
 Python 3.14 and [uv](https://docs.astral.sh/uv/) are required. The core

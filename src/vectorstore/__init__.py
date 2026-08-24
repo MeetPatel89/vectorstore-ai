@@ -10,6 +10,7 @@ from .catalog import (
     RetrievalScope,
     SqliteDocumentCatalog,
 )
+from .config import build_retriever
 from .embeddings import (
     BudgetLedger,
     CircuitBreaker,
@@ -23,8 +24,20 @@ from .embeddings import (
     SelectionReason,
     SentenceTransformerEmbedding,
 )
+from .hybrid import (
+    QueryAnalyzer,
+    QueryKind,
+    QueryProfile,
+    RetrievalHit,
+    RetrievalResult,
+    RetrievalTimings,
+    Retriever,
+    RetrieverConfig,
+    rrf,
+)
 from .index import VectorIndex
 from .models import Chunk, MetadataFilter, MetadataValue, SearchResult
+from .observability import NoOpRetrievalObserver, RetrievalTraceObserver
 from .records import Record, content_hash, semantic_projection
 from .stores import (
     AzureSqlVectorStore,
@@ -54,21 +67,33 @@ __all__ = [
     "LexicalUnavailableError",
     "MetadataFilter",
     "MetadataValue",
+    "NoOpRetrievalObserver",
     "NoProviderAvailableError",
     "NumpyVectorStore",
     "OpenAIEmbedding",
     "ProviderSelection",
+    "QueryAnalyzer",
+    "QueryKind",
+    "QueryProfile",
     "RankedHit",
     "Record",
+    "RetrievalHit",
+    "RetrievalResult",
     "RetrievalScope",
+    "RetrievalTimings",
+    "RetrievalTraceObserver",
+    "Retriever",
+    "RetrieverConfig",
     "SelectionReason",
     "SentenceTransformerEmbedding",
     "SearchResult",
     "SqliteDocumentCatalog",
     "VectorIndex",
     "VectorStore",
+    "build_retriever",
     "content_hash",
     "create_store",
     "register_store",
+    "rrf",
     "semantic_projection",
 ]
