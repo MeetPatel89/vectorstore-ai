@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+from pathlib import Path
+from typing import override
 
 import pytest
 
@@ -11,6 +13,7 @@ from vectorstore import (
     EmbeddingSpec,
     FaissVectorStore,
     NumpyVectorStore,
+    VectorStore,
 )
 
 
@@ -30,6 +33,7 @@ class FakeEmbedding(EmbeddingProvider):
         self.query_calls: list[str] = []
 
     @property
+    @override
     def spec(self) -> EmbeddingSpec:
         return EmbeddingSpec(
             provider=self._provider,
@@ -37,10 +41,12 @@ class FakeEmbedding(EmbeddingProvider):
             dimension=self._dimension,
         )
 
+    @override
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         self.document_calls.append(texts)
         return [self._embed(text) for text in texts]
 
+    @override
     def embed_query(self, text: str) -> list[float]:
         self.query_calls.append(text)
         return self._embed(text)
@@ -55,7 +61,7 @@ class FakeEmbedding(EmbeddingProvider):
 
 
 @pytest.fixture(params=["numpy", "chroma", "faiss"])
-def store(request: pytest.FixtureRequest, tmp_path):
+def store(request: pytest.FixtureRequest, tmp_path: Path) -> VectorStore:
     if request.param == "numpy":
         return NumpyVectorStore()
     if request.param == "chroma":

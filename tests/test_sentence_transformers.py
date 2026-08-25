@@ -15,14 +15,14 @@ from vectorstore import SentenceTransformerEmbedding  # noqa: E402
 
 
 class TestSpec:
-    def test_default_model_spec(self):
+    def test_default_model_spec(self) -> None:
         provider = SentenceTransformerEmbedding()
         assert provider.spec.provider == "st"
         assert provider.spec.model == "all-MiniLM-L6-v2"
         assert provider.spec.dimension == 384
         assert provider.spec.space_id == "st__all_minilm_l6_v2__384__v1"
 
-    def test_unknown_model_requires_explicit_dimension(self):
+    def test_unknown_model_requires_explicit_dimension(self) -> None:
         with pytest.raises(ValueError, match="pass dimension explicitly"):
             SentenceTransformerEmbedding(model="some-unknown-model")
         provider = SentenceTransformerEmbedding(
@@ -30,17 +30,19 @@ class TestSpec:
         )
         assert provider.spec.dimension == 512
 
-    def test_constructing_does_not_load_the_model(self):
-        provider = SentenceTransformerEmbedding(model="some-unknown-model-xyz", dimension=4)
+    def test_constructing_does_not_load_the_model(self) -> None:
+        provider = SentenceTransformerEmbedding(
+            model="some-unknown-model-xyz", dimension=4
+        )
         assert provider._loaded_model is None
 
-    def test_rejects_invalid_arguments(self):
+    def test_rejects_invalid_arguments(self) -> None:
         with pytest.raises(ValueError):
             SentenceTransformerEmbedding(batch_size=0)
         with pytest.raises(ValueError):
             SentenceTransformerEmbedding(dimension=0)
 
-    def test_distinct_space_from_openai(self):
+    def test_distinct_space_from_openai(self) -> None:
         provider = SentenceTransformerEmbedding()
         assert not provider.spec.space_id.startswith("openai")
 
@@ -52,22 +54,27 @@ def provider() -> SentenceTransformerEmbedding:
 
 @pytest.mark.local_model
 class TestRealModel:
-
-    def test_embed_texts_shape_and_order(self, provider):
+    def test_embed_texts_shape_and_order(
+        self, provider: SentenceTransformerEmbedding
+    ) -> None:
         vectors = provider.embed_texts(["first text", "second text"])
         assert len(vectors) == 2
         assert all(len(vector) == 384 for vector in vectors)
         assert vectors[0] != vectors[1]
 
-    def test_vectors_are_l2_normalized(self, provider):
+    def test_vectors_are_l2_normalized(
+        self, provider: SentenceTransformerEmbedding
+    ) -> None:
         [vector] = provider.embed_texts(["normalize me"])
         norm = math.sqrt(sum(value * value for value in vector))
         assert norm == pytest.approx(1.0, abs=1e-3)
 
-    def test_empty_input(self, provider):
+    def test_empty_input(self, provider: SentenceTransformerEmbedding) -> None:
         assert provider.embed_texts([]) == []
 
-    def test_embed_query_matches_document_embedding(self, provider):
+    def test_embed_query_matches_document_embedding(
+        self, provider: SentenceTransformerEmbedding
+    ) -> None:
         query = provider.embed_query("payment reconciliation")
         [doc] = provider.embed_texts(["payment reconciliation"])
         assert query == pytest.approx(doc)

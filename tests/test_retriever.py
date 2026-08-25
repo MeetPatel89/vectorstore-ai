@@ -7,6 +7,9 @@ without any network access.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Never, override
+
 import pytest
 from conftest import FakeEmbedding
 
@@ -20,20 +23,25 @@ from vectorstore import (
     QueryKind,
     RetrievalResult,
     RetrievalScope,
+    RetrievalTraceObserver,
     Retriever,
     RetrieverConfig,
     SqliteDocumentCatalog,
+    VectorStore,
     build_retriever,
 )
 from vectorstore.hybrid.retriever import merge_scope_filter
+from vectorstore.models import MetadataFilter, MetadataValue
 
 
 class FailingEmbedding(FakeEmbedding):
     """A provider whose every call raises, for failure-path tests."""
 
+    @override
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         raise RuntimeError("provider exploded")
 
+    @override
     def embed_query(self, text: str) -> list[float]:
         raise RuntimeError("provider exploded")
 
@@ -99,7 +107,7 @@ CHUNKS = [
     ),
 ]
 
-CHUNK_METADATA = {
+CHUNK_METADATA: dict[str, dict[str, MetadataValue]] = {
     "chunk-payments": {"tenant_id": "acme", "visibility": "internal"},
     "chunk-network": {"tenant_id": "acme", "visibility": "internal"},
     "chunk-secret": {"tenant_id": "other-tenant", "visibility": "restricted"},
@@ -117,7 +125,9 @@ def catalog() -> SqliteDocumentCatalog:
 def make_store(embedder: FakeEmbedding) -> NumpyVectorStore:
     store = NumpyVectorStore()
     chunks = [
-        Chunk(id=chunk.chunk_id, text=chunk.text, metadata=CHUNK_METADATA[chunk.chunk_id])
+        Chunk(
+            id=chunk.chunk_id, text=chunk.text, metadata=CHUNK_METADATA[chunk.chunk_id]
+        )
         for chunk in CHUNKS
     ]
     store.upsert(chunks, embedder.embed_texts([chunk.text for chunk in chunks]))
@@ -139,12 +149,12 @@ def make_retriever(
     primary: FakeEmbedding,
     fallback: FakeEmbedding | None = None,
     *,
-    stores: dict[str, object] | None = None,
-    observer: object | None = None,
+    stores: Mapping[str, VectorStore] | None = None,
+    observer: RetrievalTraceObserver | None = None,
     config: RetrieverConfig | None = None,
-    **router_kwargs: object,
+    primary_enabled: bool = True,
 ) -> Retriever:
-    router = EmbeddingRouter(primary, fallback, **router_kwargs)
+    router = EmbeddingRouter(primary, fallback, primary_enabled=primary_enabled)
     if stores is None:
         stores = {primary.spec.space_id: make_store(primary)}
         if fallback is not None:
@@ -242,7 +252,7 @@ class TestScopeEnforcement:
         }
 
     def test_merge_scope_filter_passthrough_without_scope(self) -> None:
-        original = {"doc_type": "incident"}
+        original: MetadataFilter = {"doc_type": "incident"}
         assert merge_scope_filter(original, None) is original
         assert merge_scope_filter(original, RetrievalScope()) is original
 
@@ -260,9 +270,7 @@ class TestDegradation:
             broken_primary.spec.space_id: NumpyVectorStore(),
             fallback.spec.space_id: make_store(fallback),
         }
-        retriever = make_retriever(
-            catalog, broken_primary, fallback, stores=stores
-        )
+        retriever = make_retriever(catalog, broken_primary, fallback, stores=stores)
         result = retriever.retrieve("payment reconciliation reports")
 
         assert result.provider == "local-fake"
@@ -277,9 +285,7 @@ class TestDegradation:
         primary: FakeEmbedding,
         fallback: FakeEmbedding,
     ) -> None:
-        retriever = make_retriever(
-            catalog, primary, fallback, primary_enabled=False
-        )
+        retriever = make_retriever(catalog, primary, fallback, primary_enabled=False)
         result = retriever.retrieve("payment reconciliation reports")
         assert result.provider == "local-fake"
         assert result.provider_reason == "openai_disabled"
@@ -313,7 +319,9 @@ class TestDegradation:
     def test_missing_store_for_selected_space_degrades_gracefully(
         self, catalog: SqliteDocumentCatalog, primary: FakeEmbedding
     ) -> None:
-        retriever = make_retriever(catalog, primary, stores={"wrong_space": NumpyVectorStore()})
+        retriever = make_retriever(
+            catalog, primary, stores={"wrong_space": NumpyVectorStore()}
+        )
         result = retriever.retrieve("payment reconciliation reports")
         assert result.degraded is True
         assert any("no vector store" in message for message in result.errors)
@@ -323,7 +331,8 @@ class TestDegradation:
         self, primary: FakeEmbedding
     ) -> None:
         class NoFtsCatalog(SqliteDocumentCatalog):
-            def search_lexical(self, *args: object, **kwargs: object):  # type: ignore[override]
+            @override
+            def search_lexical(self, *args: object, **kwargs: object) -> Never:
                 raise LexicalUnavailableError("FTS5 not available")
 
         catalog = NoFtsCatalog()

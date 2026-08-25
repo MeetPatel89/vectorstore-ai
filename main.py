@@ -18,6 +18,7 @@ SAMPLE_QUERIES: tuple[tuple[str, dict[str, object] | None], ...] = (
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line options for the backend-selection demo."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--store",
@@ -35,6 +36,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_chunks(root: Path = CORPUS_ROOT) -> list[Chunk]:
+    """Load Markdown files below *root* as vector-store chunks."""
     chunks: list[Chunk] = []
     for markdown_file in sorted(root.rglob("*.md")):
         chunks.append(
@@ -48,10 +50,12 @@ def load_chunks(root: Path = CORPUS_ROOT) -> list[Chunk]:
 
 
 def main() -> int:
+    """Index the bundled corpus and run the sample searches."""
     args = parse_args()
     if not os.environ.get("OPENAI_API_KEY"):
         print(
-            "OPENAI_API_KEY is not set. Set it before running the semantic-search demo.",
+            "OPENAI_API_KEY is not set. Set it before running the "
+            "semantic-search demo.",
             file=sys.stderr,
         )
         return 2
@@ -86,10 +90,7 @@ def main() -> int:
             continue
         for rank, result in enumerate(results, start=1):
             snippet = " ".join(result.chunk.text.split())[:180]
-            print(
-                f"  {rank}. {result.score:+.4f}  {result.chunk.id}\n"
-                f"     {snippet}"
-            )
+            print(f"  {rank}. {result.score:+.4f}  {result.chunk.id}\n     {snippet}")
 
     return 0
 

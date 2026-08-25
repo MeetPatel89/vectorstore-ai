@@ -27,7 +27,6 @@ def rrf(
     is sorted by descending fused score with ties broken by ID, so fusion
     is fully deterministic.
     """
-
     if k <= 0:
         raise ValueError("k must be greater than zero")
     if weights is None:
@@ -47,8 +46,8 @@ def rrf(
             if candidate_id in seen:
                 continue
             seen.add(candidate_id)
-            scores[candidate_id] = (
-                scores.get(candidate_id, 0.0) + weight / (k + position)
+            scores[candidate_id] = scores.get(candidate_id, 0.0) + weight / (
+                k + position
             )
 
     return sorted(scores.items(), key=lambda item: (-item[1], item[0]))

@@ -135,7 +135,6 @@ def merge_scope_filter(
     metadata keys are excluded from scoped dense search rather than treated
     as shared, so a scoped request can never widen through the dense path.
     """
-
     if scope is None or (scope.tenant_id is None and scope.visibility is None):
         return filter
     merged: MetadataFilter = dict(filter or {})
@@ -187,7 +186,6 @@ class Retriever:
 
     def _validate_spaces(self) -> None:
         """Fail fast on store/spec mismatches instead of at query time."""
-
         assert self._router is not None
         providers = [self._router.primary]
         if self._router.fallback is not None:
@@ -206,6 +204,7 @@ class Retriever:
 
     @property
     def config(self) -> RetrieverConfig:
+        """The immutable retrieval configuration."""
         return self._config
 
     def find(
@@ -219,7 +218,6 @@ class Retriever:
         This is the short-circuit for pure-filter requests; it involves no
         embeddings, no lexical search, and no fusion.
         """
-
         return self._catalog.find(filter=filter, scope=scope, limit=limit)
 
     def retrieve(
@@ -236,7 +234,6 @@ class Retriever:
         (SQL for lexical, filter pushdown for dense), never by
         post-filtering. ``k`` overrides the configured ``final_top_k``.
         """
-
         profile = self._analyzer.analyze(query)
         if profile.kind is QueryKind.EMPTY:
             raise ValueError(
@@ -314,9 +311,7 @@ class Retriever:
 
     # -- dense branch -------------------------------------------------------
 
-    def _dense_search(
-        self, query: str, filter: MetadataFilter | None
-    ) -> _DenseOutcome:
+    def _dense_search(self, query: str, filter: MetadataFilter | None) -> _DenseOutcome:
         assert self._router is not None
         errors: list[str] = []
 
@@ -359,9 +354,7 @@ class Retriever:
             except Exception as exc:  # noqa: BLE001 - degrade, never fail retrieval
                 if candidate_is_primary:
                     self._router.record_failure()
-                errors.append(
-                    f"embedding failed ({candidate.spec.space_id}): {exc}"
-                )
+                errors.append(f"embedding failed ({candidate.spec.space_id}): {exc}")
                 continue
             if candidate_is_primary:
                 self._router.record_usage(estimate_tokens([query]))

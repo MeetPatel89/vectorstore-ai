@@ -30,10 +30,10 @@ class VectorIndex:
     @property
     def spec(self) -> EmbeddingSpec:
         """The embedding space this index reads from and writes to."""
-
         return self._spec
 
     def index(self, chunks: list[Chunk]) -> None:
+        """Embed and upsert chunks into this index's embedding space."""
         if not chunks:
             return
         vectors = self.embedder.embed_texts([chunk.text for chunk in chunks])
@@ -49,12 +49,15 @@ class VectorIndex:
         k: int = 5,
         filter: MetadataFilter | None = None,
     ) -> list[SearchResult]:
+        """Embed *query* and return the highest-scoring matching chunks."""
         if k <= 0:
             return []
         return self.store.search(self.embedder.embed_query(query), k=k, filter=filter)
 
     def delete(self, ids: list[str]) -> None:
+        """Delete chunks with the requested IDs from the store."""
         self.store.delete(ids)
 
     def count(self) -> int:
+        """Return the number of chunks in the store."""
         return self.store.count()

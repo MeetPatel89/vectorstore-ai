@@ -32,7 +32,10 @@ class TestClassification:
             ("status of CHG-2407 rollout", "CHG-2407"),
             ("getting ORA-00001 on insert", "ORA-00001"),
             ("duplicate key SQLSTATE 23505 during sync", "SQLSTATE 23505"),
-            ("browser shows ERR_CONNECTION_RESET intermittently", "ERR_CONNECTION_RESET"),
+            (
+                "browser shows ERR_CONNECTION_RESET intermittently",
+                "ERR_CONNECTION_RESET",
+            ),
         ],
     )
     def test_identifier_queries(

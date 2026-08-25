@@ -118,7 +118,9 @@ def test_empty_store_and_nonpositive_k_return_no_results(store: VectorStore) -> 
     assert store.search([1.0, 0.0], k=0) == []
 
 
-def test_get_preserves_requested_order_and_skips_unknown_ids(store: VectorStore) -> None:
+def test_get_preserves_requested_order_and_skips_unknown_ids(
+    store: VectorStore,
+) -> None:
     _seed(store)
 
     chunks = store.get(["gamma", "missing", "alpha", "gamma"])

@@ -57,7 +57,6 @@ def semantic_projection(record: Record) -> str:
     attributes are deliberately excluded; they remain available separately
     for filtering and metadata.
     """
-
     lines = [
         f"{label}: {value.strip()}"
         for label, value in record.semantic_fields.items()
@@ -77,7 +76,6 @@ def content_hash(text: str) -> str:
     identifier, this answers whether an existing vector still represents the
     current semantic content, so unchanged content is never re-embedded.
     """
-
     if not isinstance(text, str):
         raise ValueError("content to hash must be a string")
     return hashlib.sha256(text.encode("utf-8")).hexdigest()

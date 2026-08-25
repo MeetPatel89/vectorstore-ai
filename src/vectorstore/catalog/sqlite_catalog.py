@@ -17,9 +17,10 @@ import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Self
 
 from vectorstore.embeddings.base import EmbeddingSpec
-from vectorstore.models import MetadataFilter, MetadataValue
+from vectorstore.models import MetadataFilter
 
 from .base import (
     CatalogChunk,
@@ -140,7 +141,6 @@ def _fts_match_expression(query: str) -> str:
     produce a MATCH syntax error, and quoted phrases in the query are kept
     as phrase queries. Tokens are combined with FTS5's implicit AND.
     """
-
     if not isinstance(query, str) or not query.strip():
         raise ValueError("lexical query must be a non-empty string")
 
@@ -166,7 +166,6 @@ def _filter_clauses(
     on ``attributes_json`` via ``json_extract`` with a parametrized path, so
     filter keys never reach the SQL text.
     """
-
     clauses: list[str] = []
     params: list[object] = []
 
@@ -201,20 +200,17 @@ def _filter_clauses(
                 clauses.append(f"{expr} {_COMPARISON_SQL[operator]} ?")
                 params.append(_sql_value(expected))
             else:
-                raise ValueError(
-                    f"unsupported metadata filter operator: {operator!r}"
-                )
+                raise ValueError(f"unsupported metadata filter operator: {operator!r}")
 
     return clauses, params
 
 
 def _scope_clauses(scope: RetrievalScope) -> tuple[list[str], list[object]]:
-    """SQL enforcing the authorization scope over documents ``d``.
+    """Build SQL that enforces the authorization scope over documents ``d``.
 
     Documents without a tenant are shared across tenants; documents without
     a visibility label are visible to every scope.
     """
-
     clauses: list[str] = []
     params: list[object] = []
     if scope.tenant_id is not None:
@@ -271,9 +267,10 @@ class SqliteDocumentCatalog:
     # -- lifecycle ----------------------------------------------------------
 
     def close(self) -> None:
+        """Close the underlying SQLite connection."""
         self._connection.close()
 
-    def __enter__(self) -> SqliteDocumentCatalog:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc_info: object) -> None:
@@ -282,6 +279,7 @@ class SqliteDocumentCatalog:
     # -- structured documents and chunks ------------------------------------
 
     def upsert_documents(self, documents: list[CatalogDocument]) -> None:
+        """Insert new documents and replace existing documents by ID."""
         rows = [
             (
                 document.doc_id,
@@ -321,6 +319,7 @@ class SqliteDocumentCatalog:
             )
 
     def upsert_chunks(self, chunks: list[CatalogChunk]) -> None:
+        """Insert new chunks and replace existing chunks by ID."""
         rows = [
             (
                 chunk.chunk_id,
@@ -352,6 +351,7 @@ class SqliteDocumentCatalog:
             )
 
     def delete_documents(self, doc_ids: list[str]) -> None:
+        """Delete documents and all associated chunk and ledger rows."""
         if not doc_ids:
             return
         placeholders = ", ".join("?" for _ in doc_ids)
@@ -376,6 +376,7 @@ class SqliteDocumentCatalog:
         scope: RetrievalScope | None = None,
         limit: int = 100,
     ) -> list[CatalogDocument]:
+        """Find documents matching structured filters and authorization scope."""
         if limit <= 0:
             raise ValueError("limit must be greater than zero")
         clauses, params = _scope_clauses(scope or _UNRESTRICTED)
@@ -391,6 +392,7 @@ class SqliteDocumentCatalog:
         return [self._row_to_document(row) for row in rows]
 
     def get_chunks(self, chunk_ids: list[str]) -> list[CatalogChunk]:
+        """Return known chunks in requested-ID order."""
         if not chunk_ids:
             return []
         placeholders = ", ".join("?" for _ in chunk_ids)
@@ -410,6 +412,7 @@ class SqliteDocumentCatalog:
         filter: MetadataFilter | None = None,
         scope: RetrievalScope | None = None,
     ) -> list[RankedHit]:
+        """Rank active chunks with SQLite FTS5 lexical search."""
         if not self._fts_available:
             raise LexicalUnavailableError(
                 "this SQLite build does not include the FTS5 extension"
@@ -439,9 +442,7 @@ class SqliteDocumentCatalog:
                 [match, *params, k],
             ).fetchall()
         except sqlite3.OperationalError as exc:
-            raise LexicalUnavailableError(
-                f"lexical search failed: {exc}"
-            ) from exc
+            raise LexicalUnavailableError(f"lexical search failed: {exc}") from exc
 
         # bm25() returns lower-is-better values; negate so higher is better.
         return [
@@ -458,6 +459,7 @@ class SqliteDocumentCatalog:
     def embedding_state(
         self, space_id: str, chunk_ids: list[str] | None = None
     ) -> dict[str, EmbeddingState]:
+        """Return recorded embedding state for an embedding space."""
         sql = "SELECT * FROM chunk_embeddings WHERE space_id = ?"
         params: list[object] = [space_id]
         if chunk_ids is not None:
@@ -484,6 +486,7 @@ class SqliteDocumentCatalog:
     def mark_embedded(
         self, chunk_id: str, spec: EmbeddingSpec, content_hash: str
     ) -> None:
+        """Record a chunk as embedded in the supplied embedding space."""
         if not isinstance(content_hash, str) or not content_hash:
             raise ValueError("content_hash must be a non-empty string")
         with self._connection:
@@ -514,6 +517,7 @@ class SqliteDocumentCatalog:
             )
 
     def stale_chunk_ids(self, spec: EmbeddingSpec) -> list[str]:
+        """Return active chunks missing a current embedding for *spec*."""
         rows = self._connection.execute(
             """
             SELECT c.chunk_id AS chunk_id
@@ -531,6 +535,7 @@ class SqliteDocumentCatalog:
     # -- budget ledger (BudgetLedger protocol) ---------------------------------
 
     def record(self, provider: str, tokens: int, usd: float) -> None:
+        """Record token usage and estimated cost for the current UTC day."""
         if tokens < 0:
             raise ValueError("tokens must not be negative")
         if usd < 0:
@@ -545,6 +550,7 @@ class SqliteDocumentCatalog:
             )
 
     def spent_today(self) -> float:
+        """Return total estimated embedding spend for the current UTC day."""
         row = self._connection.execute(
             "SELECT COALESCE(SUM(estimated_usd), 0.0) AS total "
             "FROM embedding_usage WHERE date = ?",
@@ -553,6 +559,7 @@ class SqliteDocumentCatalog:
         return float(row["total"])
 
     def spent_month(self) -> float:
+        """Return total estimated embedding spend for the current UTC month."""
         row = self._connection.execute(
             "SELECT COALESCE(SUM(estimated_usd), 0.0) AS total "
             "FROM embedding_usage WHERE date LIKE ?",
@@ -561,6 +568,7 @@ class SqliteDocumentCatalog:
         return float(row["total"])
 
     def tokens_today(self, provider: str) -> int:
+        """Return tokens recorded today for *provider*."""
         row = self._connection.execute(
             "SELECT COALESCE(SUM(tokens), 0) AS total "
             "FROM embedding_usage WHERE date = ? AND provider = ?",

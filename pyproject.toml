@@ -7,6 +7,7 @@ requires-python = ">=3.14"
 dependencies = [
     "numpy>=2.1",
     "openai>=1.0",
+    "python-dotenv>=1.2.2",
 ]
 
 [project.optional-dependencies]
@@ -29,6 +30,10 @@ dev = [
     "pytest>=8.0",
     "chromadb>=1.5.5",
     "faiss-cpu>=1.14.3",
+    "mypy>=2.3.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.16.2",
+    "ty>=0.0.69",
 ]
 
 [build-system]
@@ -43,3 +48,59 @@ testpaths = ["tests"]
 markers = [
     "local_model: loads a real sentence-transformers model (requires the 'local' extra)",
 ]
+
+[tool.mypy]
+files = ["src", "tests", "main.py", "examples"]
+python_version = "3.14"
+plugins = ["pydantic.mypy"]
+strict = true
+enable_error_code = ["explicit-override"]
+show_error_codes = true
+
+[tool.pydantic-mypy]
+init_forbid_extra = false
+init_typed = false
+warn_required_dynamic_aliases = true
+
+[tool.ty.src]
+include = ["src", "tests", "main.py", "examples"]
+
+[tool.ty.rules]
+missing-type-argument = "error"
+possibly-unresolved-reference = "warn"
+
+[tool.ruff]
+line-length = 88
+target-version = "py314"
+
+[tool.ruff.lint]
+preview = true
+ignore = [
+    # Backend adapters intentionally cross dynamically typed third-party APIs.
+    "ANN401",
+    # Magic methods inherit their behavior from the documented public object.
+    "D105",
+]
+select = [
+    "E",
+    "F",
+    "I",
+    "PTH",
+    "N",
+    "D",
+    "C4",
+    "ANN",
+    "PYI",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test names describe behavior more usefully than duplicate public-API docstrings.
+"tests/**/*.py" = ["D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"

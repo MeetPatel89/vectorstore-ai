@@ -26,7 +26,11 @@ def test_index_end_to_end() -> None:
             "Payment export totals differ from dashboard totals",
             {"doc_type": "known_issue"},
         ),
-        Chunk("limits", "API clients receive too many requests errors", {"doc_type": "runbook"}),
+        Chunk(
+            "limits",
+            "API clients receive too many requests errors",
+            {"doc_type": "runbook"},
+        ),
     ]
 
     index.index(chunks)

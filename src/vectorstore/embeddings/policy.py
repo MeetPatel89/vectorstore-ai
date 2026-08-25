@@ -38,7 +38,6 @@ def estimate_tokens(texts: list[str]) -> int:
     The estimate is corrected with actual ``usage.total_tokens`` from the
     API response when usage is recorded after the call.
     """
-
     return sum(max(1, math.ceil(len(text) / 4)) for text in texts if text)
 
 
@@ -48,7 +47,6 @@ def estimate_cost_usd(model: str, tokens: int) -> float:
     Unknown models cost 0.0 so that budget checks never block a model we
     have no price for; pass explicit rates to the router to override.
     """
-
     rate = EMBEDDING_COST_PER_MILLION_TOKENS.get(model, 0.0)
     return tokens / 1_000_000 * rate
 
@@ -92,6 +90,7 @@ class InMemoryBudgetLedger:
         self._tokens_by_day: dict[tuple[str, str], int] = {}
 
     def record(self, provider: str, tokens: int, usd: float) -> None:
+        """Record one usage event in the process-local ledger."""
         if tokens < 0:
             raise ValueError("tokens must not be negative")
         if usd < 0:
@@ -102,18 +101,19 @@ class InMemoryBudgetLedger:
         self._tokens_by_day[key] = self._tokens_by_day.get(key, 0) + tokens
 
     def spent_today(self) -> float:
+        """Return estimated spend for the current UTC day."""
         day = self._now().strftime("%Y-%m-%d")
         return self._usd_by_day.get(day, 0.0)
 
     def spent_month(self) -> float:
+        """Return estimated spend for the current UTC month."""
         month = self._now().strftime("%Y-%m")
         return sum(
-            usd
-            for day, usd in self._usd_by_day.items()
-            if day.startswith(month)
+            usd for day, usd in self._usd_by_day.items() if day.startswith(month)
         )
 
     def tokens_today(self, provider: str) -> int:
+        """Return tokens recorded today for *provider*."""
         day = self._now().strftime("%Y-%m-%d")
         return self._tokens_by_day.get((day, provider), 0)
 
@@ -147,11 +147,13 @@ class CircuitBreaker:
         self._rate_limited_until: datetime | None = None
 
     def record_success(self) -> None:
+        """Close the breaker and reset consecutive failures."""
         self._consecutive_failures = 0
         self._open_until = None
         self._rate_limited_until = None
 
     def record_failure(self) -> None:
+        """Record a failure and open the breaker at its threshold."""
         self._consecutive_failures += 1
         if self._consecutive_failures >= self._failure_threshold:
             moment = self._now()
@@ -160,6 +162,7 @@ class CircuitBreaker:
             )
 
     def record_rate_limit(self, retry_after_seconds: float | None = None) -> None:
+        """Open the rate-limit window for the requested backoff."""
         backoff = retry_after_seconds or self._rate_limit_backoff_seconds
         moment = self._now()
         self._rate_limited_until = datetime.fromtimestamp(
@@ -168,10 +171,12 @@ class CircuitBreaker:
 
     @property
     def is_open(self) -> bool:
+        """Whether the failure circuit is currently open."""
         return self._window_active(self._open_until)
 
     @property
     def is_rate_limited(self) -> bool:
+        """Whether the rate-limit backoff window is currently active."""
         return self._window_active(self._rate_limited_until)
 
     def _window_active(self, until: datetime | None) -> bool:
@@ -188,6 +193,7 @@ class ProviderSelection:
 
     @property
     def is_fallback(self) -> bool:
+        """Whether the selection represents automatic fallback."""
         return self.reason not in (
             SelectionReason.PRIMARY,
             SelectionReason.MANUAL_OVERRIDE,
@@ -207,9 +213,10 @@ class NoProviderAvailableError(RuntimeError):
 class EmbeddingRouter:
     """Deterministically select between the primary and fallback provider.
 
-    The primary provider is normally :class:`~vectorstore.embeddings.openai.OpenAIEmbedding`
-    and the fallback a :class:`~vectorstore.embeddings.sentence_transformers.SentenceTransformerEmbedding`;
-    the reason codes reflect that convention.
+    The primary provider is normally
+    :class:`~vectorstore.embeddings.openai.OpenAIEmbedding` and the fallback
+    a local Sentence Transformers provider; the reason codes reflect that
+    convention.
 
     Decision order:
 
@@ -262,18 +269,22 @@ class EmbeddingRouter:
 
     @property
     def primary(self) -> EmbeddingProvider:
+        """The primary embedding provider."""
         return self._primary
 
     @property
     def fallback(self) -> EmbeddingProvider | None:
+        """The fallback embedding provider, when configured."""
         return self._fallback
 
     @property
     def ledger(self) -> BudgetLedger:
+        """The budget ledger used by routing decisions."""
         return self._ledger
 
     @property
     def breaker(self) -> CircuitBreaker:
+        """The circuit breaker used by routing decisions."""
         return self._breaker
 
     def select(
@@ -290,7 +301,6 @@ class EmbeddingRouter:
         ``estimated_tokens`` so budget checks can account for the upcoming
         call, not only past spend.
         """
-
         if estimated_tokens is None:
             estimated_tokens = estimate_tokens(texts) if texts else 0
 
@@ -326,7 +336,6 @@ class EmbeddingRouter:
         Prefer the exact ``usage.total_tokens`` from the API response over
         the pre-call estimate.
         """
-
         if usd is None:
             usd = tokens / 1_000_000 * self._cost_rate
         self._ledger.record(self._primary.spec.provider, tokens, usd)
@@ -334,12 +343,10 @@ class EmbeddingRouter:
 
     def record_failure(self) -> None:
         """Record a failed primary-provider call (network, 5xx, auth)."""
-
         self._breaker.record_failure()
 
     def record_rate_limit(self, retry_after_seconds: float | None = None) -> None:
         """Record a 429 from the primary provider."""
-
         self._breaker.record_rate_limit(retry_after_seconds)
 
     def _use_primary(self, reason: SelectionReason) -> ProviderSelection:

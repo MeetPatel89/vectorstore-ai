@@ -35,7 +35,7 @@ def test_different_versions_produce_different_spaces() -> None:
     assert v1.space_id != v2.space_id
 
 
-def test_openai_embedding_exposes_spec(monkeypatch) -> None:
+def test_openai_embedding_exposes_spec(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: object())
     embedder = OpenAIEmbedding(api_key="test-key")
 

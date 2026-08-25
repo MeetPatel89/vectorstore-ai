@@ -59,7 +59,6 @@ def build_retriever(
     Passing neither ``router`` nor ``primary`` yields a retriever with the
     dense branch disabled: lexical and structured retrieval only.
     """
-
     if router is not None and (primary is not None or fallback is not None):
         raise ValueError("pass either router or primary/fallback providers, not both")
 

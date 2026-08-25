@@ -36,7 +36,6 @@ def matches(metadata: dict[str, MetadataValue], filter: MetadataFilter) -> bool:
     comparison operators. Multiple fields, and multiple comparison operators
     for one field, are combined with AND semantics.
     """
-
     for key, condition in filter.items():
         if not isinstance(key, str) or not key:
             raise ValueError("metadata filter keys must be non-empty strings")
@@ -64,13 +63,13 @@ def matches(metadata: dict[str, MetadataValue], filter: MetadataFilter) -> bool:
                 continue
 
             try:
-                if operator == "$gt" and not actual > expected:  # type: ignore[operator]
+                if operator == "$gt" and not actual > expected:
                     return False
-                if operator == "$gte" and not actual >= expected:  # type: ignore[operator]
+                if operator == "$gte" and not actual >= expected:
                     return False
-                if operator == "$lt" and not actual < expected:  # type: ignore[operator]
+                if operator == "$lt" and not actual < expected:
                     return False
-                if operator == "$lte" and not actual <= expected:  # type: ignore[operator]
+                if operator == "$lte" and not actual <= expected:
                     return False
             except TypeError:
                 return False

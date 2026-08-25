@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, override
 
 from .base import EmbeddingProvider, EmbeddingSpec
 
@@ -22,8 +22,9 @@ class SentenceTransformerEmbedding(EmbeddingProvider):
     with OpenAI vectors.
 
     The model itself is loaded lazily on first use so that constructing the
-    provider (for example inside an :class:`~vectorstore.embeddings.policy.EmbeddingRouter`)
-    does not trigger a model download.
+    provider (for example inside an
+    :class:`~vectorstore.embeddings.policy.EmbeddingRouter`) does not trigger a
+    model download.
     """
 
     def __init__(
@@ -64,7 +65,9 @@ class SentenceTransformerEmbedding(EmbeddingProvider):
         self._loaded_model: Any = None
 
     @property
+    @override
     def spec(self) -> EmbeddingSpec:
+        """Describe the provider's local embedding space."""
         return EmbeddingSpec(
             provider="st",
             model=self.model,
@@ -78,11 +81,9 @@ class SentenceTransformerEmbedding(EmbeddingProvider):
 
             self._loaded_model = SentenceTransformer(self.model, device=self.device)
             # Renamed in sentence-transformers 6.x; keep the fallback for 5.x.
-            probe = getattr(
-                self._loaded_model,
-                "get_embedding_dimension",
-                self._loaded_model.get_sentence_embedding_dimension,
-            )
+            probe = getattr(self._loaded_model, "get_embedding_dimension", None)
+            if probe is None:
+                probe = getattr(self._loaded_model, "get_sentence_embedding_dimension")
             produced = probe()
             if produced is not None and produced != self._dimension:
                 raise ValueError(
@@ -91,7 +92,9 @@ class SentenceTransformerEmbedding(EmbeddingProvider):
                 )
         return self._loaded_model
 
+    @override
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Embed document texts with the locally hosted model."""
         if not texts:
             return []
 

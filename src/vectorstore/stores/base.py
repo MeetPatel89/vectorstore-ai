@@ -22,7 +22,6 @@ class VectorStore(ABC):
         reject embedding providers from an incompatible embedding space
         before any vectors are written.
         """
-
         return None
 
     @abstractmethod

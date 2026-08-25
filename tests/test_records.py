@@ -1,23 +1,30 @@
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 from vectorstore import Record, content_hash, semantic_projection
 
 
-def make_record(**overrides) -> Record:
-    fields = {
-        "id": "INC-1104",
-        "semantic_fields": {
+def make_record(
+    *,
+    id: str = "INC-1104",
+    semantic_fields: dict[str, object] | None = None,
+) -> Record:
+    resolved_fields = semantic_fields
+    if resolved_fields is None:
+        resolved_fields = {
             "Title": "Payment reporting data missing",
             "Category": "Reporting",
             "Description": "Dashboard totals lag exports.",
-        },
-        "structured": {"status": "OPEN", "severity": 3},
-        "source": "incidents.csv",
-    }
-    fields.update(overrides)
-    return Record(**fields)
+        }
+    return Record(
+        id=id,
+        semantic_fields=cast(dict[str, str], resolved_fields),
+        structured={"status": "OPEN", "severity": 3},
+        source="incidents.csv",
+    )
 
 
 def test_projection_renders_labeled_fields_in_order() -> None:
@@ -70,4 +77,4 @@ def test_content_hash_is_stable_and_content_sensitive() -> None:
     assert len(content_hash(text)) == 64
     assert content_hash(text) != content_hash(text + " updated")
     with pytest.raises(ValueError, match="must be a string"):
-        content_hash(None)
+        content_hash(cast(str, None))

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Self, override
 
 import numpy as np
 
@@ -26,12 +26,14 @@ class NumpyVectorStore(VectorStore):
         self._id_to_row: dict[str, int] = {}
 
     @property
+    @override
     def dimension(self) -> int | None:
         """The established vector width, if one is known."""
-
         return self._dimension
 
+    @override
     def upsert(self, chunks: list[Chunk], vectors: list[list[float]]) -> None:
+        """Insert new chunks and replace existing chunks with matching IDs."""
         if len(chunks) != len(vectors):
             raise ValueError("chunks and vectors must have the same length")
         if not chunks:
@@ -52,7 +54,9 @@ class NumpyVectorStore(VectorStore):
                 self._chunks[row] = chunk
                 self._vectors[row] = vector
 
+    @override
     def delete(self, ids: list[str]) -> None:
+        """Delete chunks with the requested IDs when present."""
         if not ids or not self._chunks:
             return
 
@@ -71,12 +75,14 @@ class NumpyVectorStore(VectorStore):
             self._vectors = np.empty((0, width), dtype=np.float32)
         self._rebuild_id_map()
 
+    @override
     def search(
         self,
         vector: list[float],
         k: int = 5,
         filter: MetadataFilter | None = None,
     ) -> list[SearchResult]:
+        """Return the highest-scoring chunks matching the optional filter."""
         if k <= 0:
             return []
 
@@ -102,9 +108,9 @@ class NumpyVectorStore(VectorStore):
         result_count = min(k, int(eligible.size))
         eligible_scores = scores[eligible]
         if result_count < eligible.size:
-            top_positions = np.argpartition(
-                -eligible_scores, result_count - 1
-            )[:result_count]
+            top_positions = np.argpartition(-eligible_scores, result_count - 1)[
+                :result_count
+            ]
             selected = eligible[top_positions]
         else:
             selected = eligible
@@ -121,15 +127,20 @@ class NumpyVectorStore(VectorStore):
             for row in ordered_rows
         ]
 
+    @override
     def get(self, ids: list[str]) -> list[Chunk]:
-        return [self._chunks[self._id_to_row[id_]] for id_ in ids if id_ in self._id_to_row]
+        """Return known chunks in requested-ID order."""
+        return [
+            self._chunks[self._id_to_row[id_]] for id_ in ids if id_ in self._id_to_row
+        ]
 
+    @override
     def count(self) -> int:
+        """Return the number of stored chunks."""
         return len(self._chunks)
 
     def save(self, path: str | Path) -> None:
         """Persist this store to ``vectors.npz`` and ``chunks.json``."""
-
         directory = Path(path)
         directory.mkdir(parents=True, exist_ok=True)
         ids = np.asarray([chunk.id for chunk in self._chunks], dtype=np.str_)
@@ -150,7 +161,6 @@ class NumpyVectorStore(VectorStore):
     @classmethod
     def load(cls, path: str | Path) -> Self:
         """Load and validate a store previously written by :meth:`save`."""
-
         directory = Path(path)
         try:
             with np.load(directory / "vectors.npz", allow_pickle=False) as archive:
@@ -239,7 +249,9 @@ class NumpyVectorStore(VectorStore):
         try:
             query = np.asarray(vector, dtype=np.float32)
         except (TypeError, ValueError) as exc:
-            raise ValueError("query vector must be a one-dimensional numeric vector") from exc
+            raise ValueError(
+                "query vector must be a one-dimensional numeric vector"
+            ) from exc
         if query.ndim != 1 or query.size == 0:
             raise ValueError("query vector must be a non-empty one-dimensional vector")
         if not np.all(np.isfinite(query)):
@@ -256,6 +268,4 @@ class NumpyVectorStore(VectorStore):
         return query / norm
 
     def _rebuild_id_map(self) -> None:
-        self._id_to_row = {
-            chunk.id: row for row, chunk in enumerate(self._chunks)
-        }
+        self._id_to_row = {chunk.id: row for row, chunk in enumerate(self._chunks)}

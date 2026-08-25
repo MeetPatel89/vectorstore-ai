@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Self, cast, override
 
 import numpy as np
 
@@ -36,12 +36,14 @@ class FaissVectorStore(VectorStore):
         self._next_faiss_id = 0
 
     @property
+    @override
     def dimension(self) -> int | None:
         """The established vector width, if one is known."""
-
         return self._dimension
 
+    @override
     def upsert(self, chunks: list[Chunk], vectors: list[list[float]]) -> None:
+        """Insert new chunks and replace existing chunks with matching IDs."""
         if len(chunks) != len(vectors):
             raise ValueError("chunks and vectors must have the same length")
         if not chunks:
@@ -90,7 +92,9 @@ class FaissVectorStore(VectorStore):
             self._id_to_faiss_id[chunk.id] = faiss_id
             self._faiss_id_to_id[faiss_id] = chunk.id
 
+    @override
     def delete(self, ids: list[str]) -> None:
+        """Delete chunks with the requested IDs when present."""
         faiss_ids = [
             self._id_to_faiss_id[id_]
             for id_ in dict.fromkeys(ids)
@@ -106,12 +110,14 @@ class FaissVectorStore(VectorStore):
             del self._id_to_faiss_id[id_]
             del self._chunks[id_]
 
+    @override
     def search(
         self,
         vector: list[float],
         k: int = 5,
         filter: MetadataFilter | None = None,
     ) -> list[SearchResult]:
+        """Return the highest-scoring chunks matching the optional filter."""
         if k <= 0:
             return []
 
@@ -145,15 +151,18 @@ class FaissVectorStore(VectorStore):
         ]
         return sorted(results, key=lambda result: (-result.score, result.chunk.id))
 
+    @override
     def get(self, ids: list[str]) -> list[Chunk]:
+        """Return known chunks in requested-ID order."""
         return [self._chunks[id_] for id_ in ids if id_ in self._chunks]
 
+    @override
     def count(self) -> int:
+        """Return the number of stored chunks."""
         return len(self._chunks)
 
     def save(self, path: str | Path) -> None:
         """Persist the FAISS index, chunk data, and string-ID mapping."""
-
         directory = Path(path)
         directory.mkdir(parents=True, exist_ok=True)
         manifest = {
@@ -185,7 +194,6 @@ class FaissVectorStore(VectorStore):
     @classmethod
     def load(cls, path: str | Path) -> Self:
         """Load and validate a store previously written by :meth:`save`."""
-
         directory = Path(path)
         try:
             with (directory / "manifest.json").open(encoding="utf-8") as file:
@@ -314,17 +322,20 @@ class FaissVectorStore(VectorStore):
                 f"query dimension {query.size} does not match store dimension "
                 f"{self._dimension}"
             )
-        return _normalize(query[np.newaxis, :])[0]
+        return cast(np.ndarray[Any, Any], _normalize(query[np.newaxis, :])[0])
 
 
 def _normalize(matrix: np.ndarray) -> np.ndarray:
     matrix = np.asarray(matrix, dtype=np.float32)
     norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-    return np.divide(
-        matrix,
-        norms,
-        out=np.zeros_like(matrix, dtype=np.float32),
-        where=norms != 0,
+    return cast(
+        np.ndarray[Any, Any],
+        np.divide(
+            matrix,
+            norms,
+            out=np.zeros_like(matrix, dtype=np.float32),
+            where=norms != 0,
+        ),
     )
 
 

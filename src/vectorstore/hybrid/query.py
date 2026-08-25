@@ -64,6 +64,7 @@ class QueryAnalyzer:
         self._lexical_boost = lexical_boost
 
     def analyze(self, query: str) -> QueryProfile:
+        """Classify *query* and choose fusion weights for its signals."""
         if not isinstance(query, str) or not query.strip():
             return QueryProfile(kind=QueryKind.EMPTY)
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterable
 from typing import Any
 
 import pytest
@@ -53,7 +54,9 @@ class FakeCursor:
         response = self.database.responses.popleft() if self.database.responses else []
         if isinstance(response, BaseException):
             raise response
-        self.rows = list(response)  # type: ignore[arg-type]
+        if not isinstance(response, Iterable):
+            raise TypeError("fake database responses must be iterable")
+        self.rows = list(response)
         return self
 
     def fetchone(self) -> Any | None:

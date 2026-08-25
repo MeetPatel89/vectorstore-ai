@@ -36,4 +36,5 @@ class NoOpRetrievalObserver:
     """The default observer: discards every event."""
 
     def on_retrieve(self, result: RetrievalResult) -> None:
+        """Discard a completed retrieval event."""
         return None

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -8,7 +9,7 @@ import pytest
 from vectorstore import Chunk, NumpyVectorStore
 
 
-def test_save_load_round_trip(tmp_path) -> None:
+def test_save_load_round_trip(tmp_path: Path) -> None:
     store = NumpyVectorStore()
     chunks = [
         Chunk("one", "First", {"kind": "note"}),
@@ -25,7 +26,7 @@ def test_save_load_round_trip(tmp_path) -> None:
     assert loaded.search([1.0, 0.0], k=2)[0].chunk.id == "one"
 
 
-def test_empty_store_with_known_dimension_round_trips(tmp_path) -> None:
+def test_empty_store_with_known_dimension_round_trips(tmp_path: Path) -> None:
     store = NumpyVectorStore(dimension=7)
     store.save(tmp_path)
 
@@ -47,7 +48,9 @@ def test_dimension_validation_on_upsert_and_search() -> None:
         store.search([1.0, 2.0])
 
 
-def test_load_rejects_matrix_that_disagrees_with_saved_dimension(tmp_path) -> None:
+def test_load_rejects_matrix_that_disagrees_with_saved_dimension(
+    tmp_path: Path,
+) -> None:
     np.savez_compressed(
         tmp_path / "vectors.npz",
         vectors=np.zeros((1, 2), dtype=np.float32),

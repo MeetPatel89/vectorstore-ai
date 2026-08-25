@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast, override
+
+if TYPE_CHECKING:
+    from chromadb.base_types import Metadata, PyVector
 
 from vectorstore.models import Chunk, MetadataFilter, MetadataValue, SearchResult
 
@@ -36,7 +40,9 @@ class ChromaVectorStore(VectorStore):
             metadata={"hnsw:space": "cosine"},
         )
 
+    @override
     def upsert(self, chunks: list[Chunk], vectors: list[list[float]]) -> None:
+        """Insert new chunks and replace existing chunks with matching IDs."""
         if len(chunks) != len(vectors):
             raise ValueError("chunks and vectors must have the same length")
         if not chunks:
@@ -58,23 +64,30 @@ class ChromaVectorStore(VectorStore):
                 unique_vectors[position] = vector
 
         ids = [chunk.id for chunk in unique_chunks]
+        chroma_vectors: list[PyVector] = list(unique_vectors)
         self._collection.upsert(
             ids=ids,
-            embeddings=unique_vectors,
+            embeddings=chroma_vectors,
             documents=[chunk.text for chunk in unique_chunks],
-            metadatas=self._replacement_metadatas(ids, unique_chunks),
+            # Chroma accepts None entries to represent absent metadata, but
+            # its public type alias currently omits them from metadata lists.
+            metadatas=cast(Any, self._replacement_metadatas(ids, unique_chunks)),
         )
 
+    @override
     def delete(self, ids: list[str]) -> None:
+        """Delete chunks with the requested IDs when present."""
         if ids:
             self._collection.delete(ids=list(dict.fromkeys(ids)))
 
+    @override
     def search(
         self,
         vector: list[float],
         k: int = 5,
         filter: MetadataFilter | None = None,
     ) -> list[SearchResult]:
+        """Return the highest-scoring chunks matching the optional filter."""
         if k <= 0 or self.count() == 0:
             return []
 
@@ -104,14 +117,16 @@ class ChromaVectorStore(VectorStore):
                     chunk=Chunk(
                         id=str(id_),
                         text=str(document or ""),
-                        metadata=dict(metadata or {}),
+                        metadata=_coerce_metadata(metadata),
                     ),
                     score=score,
                 )
             )
         return results
 
+    @override
     def get(self, ids: list[str]) -> list[Chunk]:
+        """Return known chunks in requested-ID order."""
         if not ids:
             return []
 
@@ -127,20 +142,21 @@ class ChromaVectorStore(VectorStore):
             str(id_): Chunk(
                 id=str(id_),
                 text=str(documents[position] or ""),
-                metadata=dict(metadatas[position] or {}),
+                metadata=_coerce_metadata(metadatas[position]),
             )
             for position, id_ in enumerate(returned_ids)
         }
         return [by_id[id_] for id_ in ids if id_ in by_id]
 
+    @override
     def count(self) -> int:
+        """Return the number of stored chunks."""
         return int(self._collection.count())
 
     def _replacement_metadatas(
         self, ids: list[str], chunks: list[Chunk]
-    ) -> list[dict[str, MetadataValue | None] | None]:
+    ) -> list[Metadata | None]:
         """Build updates that replace rather than merge Chroma metadata."""
-
         existing = self._collection.get(ids=ids, include=["metadatas"])
         existing_ids = existing.get("ids") or []
         existing_metadatas = existing.get("metadatas") or []
@@ -149,7 +165,7 @@ class ChromaVectorStore(VectorStore):
             for position, id_ in enumerate(existing_ids)
         }
 
-        replacements: list[dict[str, MetadataValue | None] | None] = []
+        replacements: list[Metadata | None] = []
         for chunk in chunks:
             replacement: dict[str, MetadataValue | None] = dict(chunk.metadata)
             for old_key in metadata_by_id.get(chunk.id, {}):
@@ -163,7 +179,6 @@ class ChromaVectorStore(VectorStore):
 
 def _translate_filter(filter: MetadataFilter | None) -> dict[str, Any] | None:
     """Translate the public filter syntax into a Chroma ``where`` clause."""
-
     if not filter:
         return None
 
@@ -204,6 +219,17 @@ def _validate_metadata_value(value: object, label: str) -> MetadataValue:
     if not isinstance(value, (str, int, float, bool)):
         raise ValueError(f"{label} requires a scalar metadata value")
     return value
+
+
+def _coerce_metadata(value: object) -> dict[str, MetadataValue]:
+    """Validate scalar metadata returned by Chroma."""
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(key): _validate_metadata_value(item, "stored metadata")
+        for key, item in value.items()
+        if item is not None
+    }
 
 
 def _first_result_list(value: Any) -> list[Any]:

@@ -74,10 +74,11 @@ class Chunk:
     text: str
     metadata: dict[str, str | int | float | bool] = field(default_factory=dict)
 
+
 @dataclass(frozen=True)
 class SearchResult:
     chunk: Chunk
-    score: float   # cosine similarity in [-1, 1]; higher is better
+    score: float  # cosine similarity in [-1, 1]; higher is better
 ```
 
 **Metadata filter format** — a plain dict, backend-agnostic:
@@ -126,8 +127,9 @@ class VectorStore(ABC):
     @abstractmethod
     def delete(self, ids: list[str]) -> None: ...
     @abstractmethod
-    def search(self, vector: list[float], k: int = 5,
-               filter: MetadataFilter | None = None) -> list[SearchResult]: ...
+    def search(
+        self, vector: list[float], k: int = 5, filter: MetadataFilter | None = None
+    ) -> list[SearchResult]: ...
     @abstractmethod
     def get(self, ids: list[str]) -> list[Chunk]: ...
     @abstractmethod
@@ -178,8 +180,10 @@ Contract notes (encode these in the shared test suite):
 ```python
 _REGISTRY: dict[str, Callable[..., VectorStore]] = {}
 
+
 def register_store(name: str, factory: Callable[..., VectorStore]) -> None: ...
-def create_store(name: str, **kwargs) -> VectorStore: ...   # raises on unknown name
+def create_store(name: str, **kwargs) -> VectorStore: ...  # raises on unknown name
+
 
 register_store("numpy", NumpyVectorStore)
 register_store("chroma", ChromaVectorStore)

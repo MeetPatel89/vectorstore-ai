@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
 from vectorstore import Chunk, FaissVectorStore
 
 
-def test_save_load_round_trip(tmp_path) -> None:
+def test_save_load_round_trip(tmp_path: Path) -> None:
     store = FaissVectorStore()
     chunks = [
         Chunk("one", "First", {"kind": "note"}),
@@ -29,7 +30,7 @@ def test_save_load_round_trip(tmp_path) -> None:
     assert loaded.search([1.0, 0.0], k=2)[0].chunk.id == "one"
 
 
-def test_empty_store_with_known_dimension_round_trips(tmp_path) -> None:
+def test_empty_store_with_known_dimension_round_trips(tmp_path: Path) -> None:
     store = FaissVectorStore(dimension=7)
     store.save(tmp_path)
 
@@ -40,7 +41,7 @@ def test_empty_store_with_known_dimension_round_trips(tmp_path) -> None:
     assert loaded.search([0.0] * 7) == []
 
 
-def test_empty_store_without_dimension_round_trips(tmp_path) -> None:
+def test_empty_store_without_dimension_round_trips(tmp_path: Path) -> None:
     store = FaissVectorStore()
     store.save(tmp_path)
 
@@ -70,7 +71,7 @@ def test_zero_vectors_are_safe_and_have_zero_similarity() -> None:
     assert store.search([0.0, 0.0])[0].score == 0.0
 
 
-def test_load_rejects_index_metadata_dimension_mismatch(tmp_path) -> None:
+def test_load_rejects_index_metadata_dimension_mismatch(tmp_path: Path) -> None:
     store = FaissVectorStore(dimension=2)
     store.save(tmp_path)
     manifest_path = tmp_path / "manifest.json"

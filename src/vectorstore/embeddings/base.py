@@ -47,7 +47,6 @@ class EmbeddingSpec:
     @property
     def space_id(self) -> str:
         """A stable identifier safe for directories, tables, and collections."""
-
         return "__".join(
             _sanitize_space_part(part)
             for part in (
@@ -70,7 +69,6 @@ class EmbeddingProvider(ABC):
     @property
     def dimension(self) -> int:
         """The number of elements in each produced embedding."""
-
         return self.spec.dimension
 
     @abstractmethod
@@ -83,5 +81,4 @@ class EmbeddingProvider(ABC):
         Providers with asymmetric query/document embedding modes can override
         this method.
         """
-
         return self.embed_texts([text])[0]

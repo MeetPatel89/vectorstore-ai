@@ -16,7 +16,6 @@ _REGISTRY: dict[str, StoreFactory] = {}
 
 def register_store(name: str, factory: StoreFactory) -> None:
     """Register or replace a named store factory."""
-
     if not isinstance(name, str) or not name:
         raise ValueError("store name must be a non-empty string")
     if not callable(factory):
@@ -26,7 +25,6 @@ def register_store(name: str, factory: StoreFactory) -> None:
 
 def create_store(name: str, **kwargs: Any) -> VectorStore:
     """Create a registered store, forwarding backend-specific arguments."""
-
     try:
         factory = _REGISTRY[name]
     except KeyError as exc:

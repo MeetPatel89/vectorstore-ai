@@ -65,8 +65,8 @@ vector = selection.provider.embed_query("how do I rotate certificates?")
 # selection.spec.space_id tells you which vector index to search;
 # spaces are never mixed.
 
-router.record_usage(tokens=12)   # feed the ledger after successful calls
-router.record_failure()          # feed the circuit breaker on errors
+router.record_usage(tokens=12)  # feed the ledger after successful calls
+router.record_failure()  # feed the circuit breaker on errors
 ```
 
 Because the two providers occupy different embedding spaces, keep one vector
@@ -110,24 +110,28 @@ from vectorstore import (
 )
 
 catalog = SqliteDocumentCatalog("corpus.db")
-catalog.upsert_documents([
-    CatalogDocument(
-        doc_id="INC-1104",
-        title="Payment reporting data missing",
-        doc_type="incident",
-        tenant_id="acme",
-        visibility="internal",
-        status="OPEN",
-        attributes={"severity": 3},
-    ),
-])
-catalog.upsert_chunks([
-    CatalogChunk(
-        chunk_id="INC-1104:0",
-        doc_id="INC-1104",
-        text="Incident: INC-1104\nDescription: reconciliation reports are empty",
-    ),
-])
+catalog.upsert_documents(
+    [
+        CatalogDocument(
+            doc_id="INC-1104",
+            title="Payment reporting data missing",
+            doc_type="incident",
+            tenant_id="acme",
+            visibility="internal",
+            status="OPEN",
+            attributes={"severity": 3},
+        ),
+    ]
+)
+catalog.upsert_chunks(
+    [
+        CatalogChunk(
+            chunk_id="INC-1104:0",
+            doc_id="INC-1104",
+            text="Incident: INC-1104\nDescription: reconciliation reports are empty",
+        ),
+    ]
+)
 
 scope = RetrievalScope(tenant_id="acme", visibility=("internal", "public"))
 open_incidents = catalog.find({"status": "OPEN", "severity": {"$gte": 2}}, scope)
@@ -156,11 +160,11 @@ primary = OpenAIEmbedding()
 fallback = SentenceTransformerEmbedding()
 
 retriever = build_retriever(
-    catalog,                             # also serves as the durable budget ledger
+    catalog,  # also serves as the durable budget ledger
     primary=primary,
-    primary_store=NumpyVectorStore(),    # 1536-dim space
+    primary_store=NumpyVectorStore(),  # 1536-dim space
     fallback=fallback,
-    fallback_store=NumpyVectorStore(),   # 384-dim space, never mixed
+    fallback_store=NumpyVectorStore(),  # 384-dim space, never mixed
     daily_budget_usd=0.50,
 )
 
@@ -249,18 +253,20 @@ from vectorstore import Chunk, OpenAIEmbedding, VectorIndex, create_store
 store = create_store("numpy")
 index = VectorIndex(OpenAIEmbedding(), store)
 
-index.index([
-    Chunk(
-        id="runbook-sso",
-        text="Troubleshoot login failures after signing certificate rotation.",
-        metadata={"doc_type": "runbook", "priority": 2},
-    ),
-    Chunk(
-        id="policy-change",
-        text="Production certificate changes require approval.",
-        metadata={"doc_type": "policy", "priority": 1},
-    ),
-])
+index.index(
+    [
+        Chunk(
+            id="runbook-sso",
+            text="Troubleshoot login failures after signing certificate rotation.",
+            metadata={"doc_type": "runbook", "priority": 2},
+        ),
+        Chunk(
+            id="policy-change",
+            text="Production certificate changes require approval.",
+            metadata={"doc_type": "policy", "priority": 1},
+        ),
+    ]
+)
 
 results = index.search(
     "users cannot log in after certificate rotation",
@@ -336,6 +342,16 @@ Tests marked `local_model` load the real MiniLM model; they skip
 automatically unless the `local` extra is installed.
 
 ## Demo
+
+For an offline-first, progressive walkthrough of semantic projection, dense
+search, and embedding-space safety, start with the
+[Phase 1 retrieval demo](examples/README.md):
+
+```bash
+uv run python examples/01_dense_search.py
+```
+
+The original backend-selection demo below uses OpenAI embeddings.
 
 The demo treats each Markdown file under `data/corpora/nautilus/raw/` as one
 chunk, indexes the corpus, and runs sample searches:

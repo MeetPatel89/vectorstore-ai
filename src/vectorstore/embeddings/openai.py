@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, override
 
 from .base import EmbeddingProvider, EmbeddingSpec
 
@@ -39,9 +39,7 @@ class OpenAIEmbedding(EmbeddingProvider):
         try:
             from openai import OpenAI
         except ImportError as exc:  # pragma: no cover - dependency is declared
-            raise ImportError(
-                "OpenAIEmbedding requires the 'openai' package"
-            ) from exc
+            raise ImportError("OpenAIEmbedding requires the 'openai' package") from exc
 
         self.model = model
         self.batch_size = batch_size
@@ -52,7 +50,9 @@ class OpenAIEmbedding(EmbeddingProvider):
         self._client = OpenAI(api_key=resolved_key, max_retries=2)
 
     @property
+    @override
     def spec(self) -> EmbeddingSpec:
+        """Describe the provider's embedding space."""
         return EmbeddingSpec(
             provider="openai",
             model=self.model,
@@ -61,7 +61,9 @@ class OpenAIEmbedding(EmbeddingProvider):
         )
 
     @property
+    @override
     def dimension(self) -> int:
+        """The number of elements in each produced embedding."""
         if self.dimensions is not None:
             return self.dimensions
         try:
@@ -72,7 +74,9 @@ class OpenAIEmbedding(EmbeddingProvider):
                 "pass dimensions explicitly"
             ) from exc
 
+    @override
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Embed document texts through the OpenAI embeddings API."""
         if not texts:
             return []
 
@@ -84,6 +88,10 @@ class OpenAIEmbedding(EmbeddingProvider):
                 request["dimensions"] = self.dimensions
 
             response = self._client.embeddings.create(**request)
+            for i in response.data:
+                print("--------------------------------")
+                print(i)
+                print("--------------------------------")
             ordered = sorted(response.data, key=lambda item: item.index)
             if len(ordered) != len(batch):
                 raise RuntimeError(

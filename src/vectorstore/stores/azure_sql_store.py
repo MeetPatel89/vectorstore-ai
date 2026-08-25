@@ -8,7 +8,7 @@ import os
 import re
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, override
 
 import numpy as np
 
@@ -76,9 +76,7 @@ class AzureSqlVectorStore(VectorStore):
                     "Azure SQL connection string is required; pass connection_string "
                     "or set AZURE_SQL_CONNECTIONSTRING"
                 )
-            connection_factory = _mssql_connection_factory(
-                resolved_connection_string
-            )
+            connection_factory = _mssql_connection_factory(resolved_connection_string)
         elif not callable(connection_factory):
             raise TypeError("connection_factory must be callable")
 
@@ -94,19 +92,18 @@ class AzureSqlVectorStore(VectorStore):
             self.create_schema()
 
     @property
+    @override
     def dimension(self) -> int:
         """The vector width required by the Azure SQL table."""
-
         return self._dimension
 
     @property
     def schema_sql(self) -> str:
-        """Return idempotent DDL for the store table.
+        """Idempotent DDL for the store table.
 
         Run this with a deployment identity. Runtime identities only need
         SELECT, INSERT, UPDATE, and DELETE permissions on the resulting table.
         """
-
         return f"""
 IF OBJECT_ID(N'{self._qualified_table}', N'U') IS NULL
 BEGIN
@@ -125,18 +122,18 @@ END;
 
     def create_schema(self) -> None:
         """Create the backing table if needed and validate its vector shape."""
-
         with self._cursor(write=True) as cursor:
             cursor.execute(self.schema_sql)
             self._validate_schema_cursor(cursor)
 
     def validate_schema(self) -> None:
         """Verify that the table exists with the configured float32 dimension."""
-
         with self._cursor() as cursor:
             self._validate_schema_cursor(cursor)
 
+    @override
     def upsert(self, chunks: list[Chunk], vectors: list[list[float]]) -> None:
+        """Insert new chunks and replace existing chunks with matching IDs."""
         if len(chunks) != len(vectors):
             raise ValueError("chunks and vectors must have the same length")
         if not chunks:
@@ -188,7 +185,9 @@ END;
                     ),
                 )
 
+    @override
     def delete(self, ids: list[str]) -> None:
+        """Delete chunks with the requested IDs when present."""
         unique_ids = list(dict.fromkeys(ids))
         if not unique_ids:
             return
@@ -202,12 +201,14 @@ END;
                     tuple(batch),
                 )
 
+    @override
     def search(
         self,
         vector: list[float],
         k: int = 5,
         filter: MetadataFilter | None = None,
     ) -> list[SearchResult]:
+        """Return the highest-scoring chunks matching the optional filter."""
         if k <= 0:
             return []
 
@@ -215,9 +216,10 @@ END;
         where_sql, filter_parameters = _translate_filter(filter)
         where_clause = f"\nWHERE {where_sql}" if where_sql else ""
 
+        parameters: list[Any]
         if is_zero:
             score_expression = "CAST(0.0 AS FLOAT)"
-            parameters: list[Any] = [k]
+            parameters = [k]
         else:
             score_expression = (
                 "CAST(1.0 - COALESCE(VECTOR_DISTANCE('cosine', "
@@ -242,7 +244,9 @@ ORDER BY [score] DESC, records.[chunk_id] ASC;
             rows = cursor.fetchall()
         return [_search_result_from_row(row) for row in rows]
 
+    @override
     def get(self, ids: list[str]) -> list[Chunk]:
+        """Return known chunks in requested-ID order."""
         if not ids:
             return []
 
@@ -262,11 +266,11 @@ ORDER BY [score] DESC, records.[chunk_id] ASC;
                     by_id[chunk.id] = chunk
         return [by_id[id_] for id_ in ids if id_ in by_id]
 
+    @override
     def count(self) -> int:
+        """Return the number of stored chunks."""
         with self._cursor() as cursor:
-            cursor.execute(
-                f"SELECT COUNT_BIG(*) FROM {self._qualified_table};"
-            )
+            cursor.execute(f"SELECT COUNT_BIG(*) FROM {self._qualified_table};")
             row = cursor.fetchone()
         if row is None:
             raise RuntimeError("Azure SQL count query returned no row")
@@ -360,9 +364,7 @@ ORDER BY [score] DESC, records.[chunk_id] ASC;
             raise ValueError("chunk IDs must be non-empty strings")
         utf16_units = len(chunk.id.encode("utf-16-le")) // 2
         if utf16_units > 450:
-            raise ValueError(
-                "Azure SQL chunk IDs cannot exceed 450 UTF-16 code units"
-            )
+            raise ValueError("Azure SQL chunk IDs cannot exceed 450 UTF-16 code units")
         if not isinstance(chunk.text, str):
             raise ValueError("chunk text must be a string")
 
@@ -394,9 +396,11 @@ def _translate_filter(
             raise ValueError("metadata filter keys must be non-empty strings")
 
         if not isinstance(condition, dict):
-            predicate, values = _equality_predicate(condition, "equality filter")
+            predicate, equality_values = _equality_predicate(
+                condition, "equality filter"
+            )
             clauses.append(_metadata_exists(predicate))
-            parameters.extend((key, *values))
+            parameters.extend((key, *equality_values))
             continue
         if not condition:
             raise ValueError(f"metadata filter for {key!r} cannot be empty")
@@ -409,22 +413,20 @@ def _translate_filter(
                 if not candidates:
                     raise ValueError("$in requires at least one value")
                 alternatives: list[str] = []
-                values: list[MetadataValue] = []
+                membership_values: list[MetadataValue] = []
                 for candidate in candidates:
                     predicate, predicate_values = _equality_predicate(
                         candidate, "$in filter"
                     )
                     alternatives.append(f"({predicate})")
-                    values.extend(predicate_values)
+                    membership_values.extend(predicate_values)
                 clauses.append(_metadata_exists(" OR ".join(alternatives)))
-                parameters.extend((key, *values))
+                parameters.extend((key, *membership_values))
                 continue
 
             sql_operator = _ORDERED_OPERATORS.get(operator)
             if sql_operator is None:
-                raise ValueError(
-                    f"unsupported metadata filter operator: {operator!r}"
-                )
+                raise ValueError(f"unsupported metadata filter operator: {operator!r}")
             if (
                 isinstance(expected, bool)
                 or not isinstance(expected, (int, float))
@@ -451,9 +453,7 @@ def _metadata_exists(value_predicate: str) -> str:
     )
 
 
-def _equality_predicate(
-    value: object, label: str
-) -> tuple[str, list[MetadataValue]]:
+def _equality_predicate(value: object, label: str) -> tuple[str, list[MetadataValue]]:
     if isinstance(value, bool):
         return (
             "metadata_item.[type] = 3 AND metadata_item.[value] "
@@ -494,7 +494,7 @@ def _serialize_metadata(metadata: dict[str, MetadataValue]) -> str:
     )
 
 
-def _is_finite_number(value: int | float) -> bool:
+def _is_finite_number(value: float) -> bool:
     return isinstance(value, int) or math.isfinite(value)
 
 
@@ -520,10 +520,10 @@ def _chunk_from_row(row: Any) -> Chunk:
 def _row_value(row: Any, position: int, name: str) -> Any:
     try:
         return row[position]
-    except (KeyError, IndexError, TypeError):
+    except KeyError, IndexError, TypeError:
         try:
             return row[name]
-        except (KeyError, IndexError, TypeError):
+        except KeyError, IndexError, TypeError:
             return getattr(row, name)
 
 

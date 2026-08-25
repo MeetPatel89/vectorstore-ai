@@ -175,7 +175,7 @@ class DocumentCatalog(Protocol):
         """Insert or update documents by ``doc_id``."""
 
     def upsert_chunks(self, chunks: list[CatalogChunk]) -> None:
-        """Insert or update chunks by ``chunk_id``, keeping the lexical index in sync."""
+        """Insert or update chunks while keeping the lexical index in sync."""
 
     def delete_documents(self, doc_ids: list[str]) -> None:
         """Remove documents with their chunks, index entries, and ledger rows."""
