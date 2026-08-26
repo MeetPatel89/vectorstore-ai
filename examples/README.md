@@ -1,0 +1,31 @@
+# Retrieval demos
+
+These scripts walk through the retrieval subsystem one implemented phase at a
+time using the bundled Nautilus ITSM corpus. They default to a deterministic
+hash-based embedder, so they need no API key, network access, or model download.
+
+## Phase 1: dense search and embedding spaces
+
+Run the first demo from the repository root:
+
+```bash
+uv run python examples/01_dense_search.py
+```
+
+It shows which source fields enter `semantic_projection()`, indexes
+section-sized chunks in a `NumpyVectorStore`, prints the provider's
+`EmbeddingSpec` and content hashes, runs three dense searches, and deliberately
+triggers the dimension-mismatch guard that prevents one store from being used
+for incompatible vector widths.
+
+The built-in hash provider is for transparent, repeatable mechanics rather than
+production-quality ranking. To opt into a real provider:
+
+```bash
+uv run python examples/01_dense_search.py --provider openai
+uv sync --extra local
+uv run python examples/01_dense_search.py --provider local
+```
+
+The OpenAI option requires `OPENAI_API_KEY`. The local option requires the
+`local` extra and may download its model the first time it runs.

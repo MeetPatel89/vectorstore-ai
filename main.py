@@ -7,7 +7,13 @@ import os
 import sys
 from pathlib import Path
 
-from vectorstore import Chunk, OpenAIEmbedding, VectorIndex, create_store
+from vectorstore import (
+    Chunk,
+    OpenAIEmbedding,
+    SentenceTransformerEmbedding,
+    VectorIndex,
+    create_store,
+)
 
 CORPUS_ROOT = Path(__file__).parent / "data" / "corpora" / "nautilus" / "raw"
 SAMPLE_QUERIES: tuple[tuple[str, dict[str, object] | None], ...] = (
@@ -96,4 +102,23 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # raise SystemExit(main())
+
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    embedding = SentenceTransformerEmbedding()
+    embeddings = embedding.embed_texts(
+        ["Hello, world!", "Nautilus Shell", "Fibonacci Spiral"]
+    )
+    print("--------------------------------")
+    print(embeddings)
+    print(type(embeddings))
+    print(len(embeddings))
+    print(len(embeddings[0]))
+    print("--------------------------------")
+    print(embedding.spec)
+    print(embedding.spec.space_id)
+    print(embedding.spec.dimension)
+    print("--------------------------------")

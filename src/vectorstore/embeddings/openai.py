@@ -88,10 +88,6 @@ class OpenAIEmbedding(EmbeddingProvider):
                 request["dimensions"] = self.dimensions
 
             response = self._client.embeddings.create(**request)
-            for i in response.data:
-                print("--------------------------------")
-                print(i)
-                print("--------------------------------")
             ordered = sorted(response.data, key=lambda item: item.index)
             if len(ordered) != len(batch):
                 raise RuntimeError(
