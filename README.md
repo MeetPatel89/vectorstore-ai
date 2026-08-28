@@ -343,12 +343,13 @@ automatically unless the `local` extra is installed.
 
 ## Demo
 
-For an offline-first, progressive walkthrough of semantic projection, dense
-search, and embedding-space safety, start with the
-[Phase 1 retrieval demo](examples/README.md):
+For offline-first, progressive walkthroughs of semantic projection, dense
+search, embedding-space safety, and provider fallback policy, see the
+[retrieval demos](examples/README.md):
 
 ```bash
 uv run python examples/01_dense_search.py
+uv run python examples/02_provider_routing.py
 ```
 
 The original backend-selection demo below uses OpenAI embeddings.

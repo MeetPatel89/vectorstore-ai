@@ -29,3 +29,27 @@ uv run python examples/01_dense_search.py --provider local
 
 The OpenAI option requires `OPENAI_API_KEY`. The local option requires the
 `local` extra and may download its model the first time it runs.
+
+## Phase 2: provider routing, budget, and fallback
+
+Run the provider-policy walkthrough offline:
+
+```bash
+uv run python examples/02_provider_routing.py
+```
+
+It composes an `EmbeddingRouter` with a primary provider, a fallback provider,
+an `InMemoryBudgetLedger`, and a `CircuitBreaker`. Four isolated scenarios show
+the exact `ProviderSelection` reason codes for normal routing, an exhausted
+daily budget, an open primary circuit, and a `force_fallback` override. The
+demo then indexes the corpus into one store per `EmbeddingSpec.space_id` to
+make the vector-space boundary concrete.
+
+The default primary and fallback are deterministic hash embedders in different
+spaces. A real provider can be used as the primary when its prerequisites are
+installed and configured:
+
+```bash
+uv run python examples/02_provider_routing.py --provider openai
+uv run python examples/02_provider_routing.py --provider local
+```
