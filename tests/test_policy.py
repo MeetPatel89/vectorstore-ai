@@ -1,10 +1,12 @@
 """Tests for the budget ledger, circuit breaker, and embedding router."""
 
 from datetime import UTC, datetime
+from typing import override
 
 import pytest
 from conftest import FakeEmbedding
 
+from vectorstore import TokenCountingUnavailableError
 from vectorstore.embeddings.policy import (
     BudgetLedger,
     CircuitBreaker,
@@ -46,11 +48,37 @@ def fallback_embedding() -> FakeEmbedding:
 
 
 class TestEstimates:
-    def test_estimate_tokens_uses_four_chars_per_token(self) -> None:
-        assert estimate_tokens(["a" * 40]) == 10
+    def test_estimate_tokens_uses_model_tokenizer(self) -> None:
+        assert estimate_tokens(["users can't log in after certificate rotation"]) == 8
 
-    def test_estimate_tokens_rounds_up_and_skips_empty(self) -> None:
-        assert estimate_tokens(["abc", "", "abcde"]) == 1 + 2
+    def test_estimate_tokens_handles_identifiers_and_multilingual_text(self) -> None:
+        assert estimate_tokens(["INC-1104"]) == 4
+        assert estimate_tokens(["业务层 API 客户端收到过多请求"]) == 14
+
+    def test_estimate_tokens_supports_explicit_encoding(self) -> None:
+        assert (
+            estimate_tokens(
+                ["INC-1104"],
+                model="custom-embedding-model",
+                encoding_name="cl100k_base",
+            )
+            == 4
+        )
+
+    def test_unknown_model_requires_explicit_encoding(self) -> None:
+        with pytest.raises(TokenCountingUnavailableError, match="encoding_name"):
+            estimate_tokens(["hello"], model="custom-embedding-model")
+
+    def test_invalid_explicit_encoding_raises_typed_error(self) -> None:
+        with pytest.raises(TokenCountingUnavailableError, match="missing-encoding"):
+            estimate_tokens(
+                ["hello"],
+                model="custom-embedding-model",
+                encoding_name="missing-encoding",
+            )
+
+    def test_empty_input_has_no_tokens(self) -> None:
+        assert estimate_tokens([""]) == 0
 
     def test_estimate_cost_known_model(self) -> None:
         assert estimate_cost_usd("text-embedding-3-small", 1_000_000) == pytest.approx(
@@ -244,6 +272,53 @@ class TestEmbeddingRouterDecisionTable:
         )
         selection = router.select(texts=["hello world, this is a query"])
         assert selection.reason is SelectionReason.BUDGET_DAILY_EXCEEDED
+
+    def test_budget_check_uses_primary_provider_estimator(self) -> None:
+        class CountingEmbedding(FakeEmbedding):
+            def __init__(self) -> None:
+                super().__init__()
+                self.estimated: list[list[str]] = []
+
+            @override
+            def estimate_tokens(self, texts: list[str]) -> int:
+                self.estimated.append(texts)
+                return 11
+
+        primary = CountingEmbedding()
+        router = EmbeddingRouter(
+            primary,
+            fallback_embedding(),
+            daily_budget_usd=0.000010,
+            cost_per_million_tokens=1.0,
+        )
+
+        selection = router.select(texts=["multilingual query"])
+
+        assert selection.reason is SelectionReason.BUDGET_DAILY_EXCEEDED
+        assert primary.estimated == [["multilingual query"]]
+
+    def test_explicit_token_estimate_bypasses_provider_estimator(self) -> None:
+        class UnexpectedEstimator(FakeEmbedding):
+            @override
+            def estimate_tokens(self, texts: list[str]) -> int:
+                raise AssertionError("provider estimator should not be called")
+
+        router = EmbeddingRouter(
+            UnexpectedEstimator(),
+            fallback_embedding(),
+            daily_budget_usd=1.0,
+            cost_per_million_tokens=1.0,
+        )
+
+        assert (
+            router.select(texts=["query"], estimated_tokens=10).reason
+            is SelectionReason.PRIMARY
+        )
+
+    def test_negative_explicit_token_estimate_rejected(self) -> None:
+        router = self.make_router(daily_budget_usd=1.0)
+        with pytest.raises(ValueError, match="must not be negative"):
+            router.select(estimated_tokens=-1)
 
     def test_record_usage_computes_cost_from_rate(self) -> None:
         router = self.make_router(cost_per_million_tokens=0.02)

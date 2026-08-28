@@ -61,17 +61,32 @@ router = EmbeddingRouter(
 )
 
 selection = router.select("query", texts=["how do I rotate certificates?"])
-vector = selection.provider.embed_query("how do I rotate certificates?")
+embedding = selection.provider.embed_query_with_usage("how do I rotate certificates?")
+vector = embedding.vector
 # selection.spec.space_id tells you which vector index to search;
 # spaces are never mixed.
 
-router.record_usage(tokens=12)  # feed the ledger after successful calls
+if selection.provider is router.primary:
+    tokens = (
+        embedding.usage.total_tokens
+        if embedding.usage is not None
+        else selection.provider.estimate_tokens(["how do I rotate certificates?"])
+    )
+    router.record_usage(tokens=tokens)
 router.record_failure()  # feed the circuit breaker on errors
 ```
 
 Because the two providers occupy different embedding spaces, keep one vector
 store per `spec.space_id` and route queries to the store matching the
 selected provider.
+
+OpenAI budget preflight uses the model's `tiktoken` encoding rather than a
+character-count approximation. Successful calls are reconciled with the
+embedding API's reported `usage.total_tokens`; `Retriever` performs this
+accounting automatically. Custom model aliases can supply
+`OpenAIEmbedding(..., encoding_name="cl100k_base")`; budgeted routing fails
+closed with `TokenCountingUnavailableError` when no model-to-encoding mapping
+is available.
 
 ## Document catalog (structured find, lexical search, ledgers)
 

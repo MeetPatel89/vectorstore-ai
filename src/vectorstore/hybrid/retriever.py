@@ -28,8 +28,8 @@ from vectorstore.embeddings.policy import (
     NoProviderAvailableError,
     ProviderSelection,
     SelectionReason,
-    estimate_tokens,
 )
+from vectorstore.embeddings.tokenization import TokenCountingUnavailableError
 from vectorstore.models import MetadataFilter, SearchResult
 from vectorstore.observability.base import RetrievalTraceObserver
 from vectorstore.stores.base import VectorStore
@@ -317,7 +317,7 @@ class Retriever:
 
         try:
             selection = self._router.select("query", texts=[query])
-        except NoProviderAvailableError as exc:
+        except (NoProviderAvailableError, TokenCountingUnavailableError) as exc:
             return _DenseOutcome(
                 results=[],
                 selection=None,
@@ -350,14 +350,20 @@ class Retriever:
 
             candidate_is_primary = candidate.provider is self._router.primary
             try:
-                vector = candidate.provider.embed_query(query)
+                embedding = candidate.provider.embed_query_with_usage(query)
+                vector = embedding.vector
             except Exception as exc:  # noqa: BLE001 - degrade, never fail retrieval
                 if candidate_is_primary:
                     self._router.record_failure()
                 errors.append(f"embedding failed ({candidate.spec.space_id}): {exc}")
                 continue
             if candidate_is_primary:
-                self._router.record_usage(estimate_tokens([query]))
+                tokens = (
+                    embedding.usage.total_tokens
+                    if embedding.usage is not None
+                    else candidate.provider.estimate_tokens([query])
+                )
+                self._router.record_usage(tokens)
 
             try:
                 results = store.search(

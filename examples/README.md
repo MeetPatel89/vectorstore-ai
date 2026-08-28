@@ -45,6 +45,10 @@ daily budget, an open primary circuit, and a `force_fallback` override. The
 demo then indexes the corpus into one store per `EmbeddingSpec.space_id` to
 make the vector-space boundary concrete.
 
+For an OpenAI primary, the router's preflight budget decision uses the model's
+tokenizer. The hybrid retriever then reconciles successful calls with the
+token count reported by the embeddings API rather than retaining an estimate.
+
 The default primary and fallback are deterministic hash embedders in different
 spaces. A real provider can be used as the primary when its prerequisites are
 installed and configured:

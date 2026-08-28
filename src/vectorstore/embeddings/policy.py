@@ -9,7 +9,6 @@ purely threshold-based operational control, not an optimization engine.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -17,6 +16,7 @@ from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 from .base import EmbeddingProvider, EmbeddingSpec
+from .tokenization import estimate_tokens as estimate_tokens
 
 Clock = Callable[[], datetime]
 
@@ -30,15 +30,6 @@ EMBEDDING_COST_PER_MILLION_TOKENS: dict[str, float] = {
     "text-embedding-3-small": 0.02,
     "text-embedding-3-large": 0.13,
 }
-
-
-def estimate_tokens(texts: list[str]) -> int:
-    """Estimate token usage before an embedding call (~4 characters/token).
-
-    The estimate is corrected with actual ``usage.total_tokens`` from the
-    API response when usage is recorded after the call.
-    """
-    return sum(max(1, math.ceil(len(text) / 4)) for text in texts if text)
 
 
 def estimate_cost_usd(model: str, tokens: int) -> float:
@@ -301,9 +292,8 @@ class EmbeddingRouter:
         ``estimated_tokens`` so budget checks can account for the upcoming
         call, not only past spend.
         """
-        if estimated_tokens is None:
-            estimated_tokens = estimate_tokens(texts) if texts else 0
-
+        if estimated_tokens is not None and estimated_tokens < 0:
+            raise ValueError("estimated_tokens must not be negative")
         if self._override == "force_primary":
             return self._use_primary(SelectionReason.MANUAL_OVERRIDE)
         if self._override == "force_fallback":
@@ -315,6 +305,11 @@ class EmbeddingRouter:
             return self._use_fallback(SelectionReason.OPENAI_UNAVAILABLE)
         if self._breaker.is_rate_limited:
             return self._use_fallback(SelectionReason.OPENAI_RATE_LIMITED)
+
+        if self._daily_budget_usd is None and self._monthly_budget_usd is None:
+            return self._use_primary(SelectionReason.PRIMARY)
+        if estimated_tokens is None:
+            estimated_tokens = self._primary.estimate_tokens(texts) if texts else 0
 
         estimated_cost = estimated_tokens / 1_000_000 * self._cost_rate
         if (

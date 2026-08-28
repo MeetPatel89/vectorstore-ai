@@ -17,7 +17,10 @@ from vectorstore import (
     CatalogChunk,
     CatalogDocument,
     Chunk,
+    EmbeddingResult,
     EmbeddingRouter,
+    EmbeddingUsage,
+    InMemoryBudgetLedger,
     LexicalUnavailableError,
     NumpyVectorStore,
     QueryKind,
@@ -44,6 +47,17 @@ class FailingEmbedding(FakeEmbedding):
     @override
     def embed_query(self, text: str) -> list[float]:
         raise RuntimeError("provider exploded")
+
+
+class UsageEmbedding(FakeEmbedding):
+    """A provider that reports authoritative usage with query vectors."""
+
+    @override
+    def embed_query_with_usage(self, text: str) -> EmbeddingResult:
+        return EmbeddingResult(
+            vectors=[self.embed_query(text)],
+            usage=EmbeddingUsage(total_tokens=321),
+        )
 
 
 class RecordingObserver:
@@ -219,6 +233,27 @@ class TestHybridRetrieve:
         retriever = make_retriever(catalog, primary)
         docs = retriever.find(filter={"doc_type": "incident"})
         assert {doc.doc_id for doc in docs} == {"doc-payments", "doc-network"}
+
+    def test_primary_api_usage_is_recorded_in_budget_ledger(
+        self, catalog: SqliteDocumentCatalog
+    ) -> None:
+        primary = UsageEmbedding(
+            dimension=64,
+            provider="openai-fake",
+            model="primary-model",
+        )
+        ledger = InMemoryBudgetLedger()
+        router = EmbeddingRouter(primary, ledger=ledger)
+        retriever = Retriever(
+            catalog=catalog,
+            stores={primary.spec.space_id: make_store(primary)},
+            router=router,
+        )
+
+        result = retriever.retrieve("payment reconciliation")
+
+        assert result.provider == "openai-fake"
+        assert ledger.tokens_today("openai-fake") == 321
 
     def test_filter_pushdown_restricts_both_branches(
         self, catalog: SqliteDocumentCatalog, primary: FakeEmbedding

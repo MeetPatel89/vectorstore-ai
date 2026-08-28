@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import cast
+from typing import cast, override
 
 import openai
 import pytest
 
-from vectorstore import OpenAIEmbedding
+import vectorstore.embeddings.openai as openai_provider
+from vectorstore import (
+    EmbeddingRouter,
+    OpenAIEmbedding,
+    TokenCountingUnavailableError,
+)
 
 
 class _FakeEmbeddingsResource:
@@ -20,12 +25,24 @@ class _FakeEmbeddingsResource:
             SimpleNamespace(index=index, embedding=[float(len(text)), float(index)])
             for index, text in enumerate(inputs)
         ]
-        return SimpleNamespace(data=list(reversed(items)))
+        usage = SimpleNamespace(
+            prompt_tokens=sum(len(text) for text in inputs),
+            total_tokens=sum(len(text) for text in inputs),
+        )
+        return SimpleNamespace(data=list(reversed(items)), usage=usage)
 
 
 class _FakeClient:
     def __init__(self) -> None:
         self.embeddings = _FakeEmbeddingsResource()
+
+
+class _MissingUsageEmbeddingsResource(_FakeEmbeddingsResource):
+    @override
+    def create(self, **kwargs: object) -> SimpleNamespace:
+        response = super().create(**kwargs)
+        del response.usage
+        return response
 
 
 def test_openai_embedding_batches_and_restores_response_order(
@@ -45,9 +62,11 @@ def test_openai_embedding_batches_and_restores_response_order(
         dimensions=2,
     )
 
-    vectors = embedder.embed_texts(["a", "bbbb", "cc"])
+    result = embedder.embed_texts_with_usage(["a", "bbbb", "cc"])
 
-    assert vectors == [[1.0, 0.0], [4.0, 1.0], [2.0, 0.0]]
+    assert result.vectors == [[1.0, 0.0], [4.0, 1.0], [2.0, 0.0]]
+    assert result.usage is not None
+    assert result.usage.total_tokens == 7
     assert client_options == {"api_key": "test-key", "max_retries": 2}
     assert client.embeddings.calls == [
         {
@@ -62,6 +81,39 @@ def test_openai_embedding_batches_and_restores_response_order(
         },
     ]
     assert embedder.dimension == 2
+
+
+def test_legacy_embedding_method_still_returns_vectors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: _FakeClient())
+    embedder = OpenAIEmbedding(api_key="test-key", dimensions=2)
+
+    assert embedder.embed_texts(["abc"]) == [[3.0, 0.0]]
+
+
+def test_query_embedding_retains_authoritative_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: _FakeClient())
+    embedder = OpenAIEmbedding(api_key="test-key", dimensions=2)
+
+    result = embedder.embed_query_with_usage("INC-1104")
+
+    assert result.vector == [8.0, 0.0]
+    assert result.usage is not None
+    assert result.usage.total_tokens == 8
+
+
+def test_missing_response_usage_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = SimpleNamespace(embeddings=_MissingUsageEmbeddingsResource())
+    monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: client)
+    embedder = OpenAIEmbedding(api_key="test-key", dimensions=2)
+
+    with pytest.raises(RuntimeError, match="valid token usage"):
+        embedder.embed_texts(["abc"])
 
 
 def test_openai_embedding_uses_known_model_dimension(
@@ -96,6 +148,111 @@ def test_unknown_model_requires_explicit_dimension(
         _ = embedder.dimension
 
 
+def test_unknown_model_requires_encoding_for_token_estimate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: _FakeClient())
+    embedder = OpenAIEmbedding(
+        model="custom-model",
+        api_key="test-key",
+        dimensions=2,
+    )
+
+    with pytest.raises(TokenCountingUnavailableError, match="encoding_name"):
+        embedder.estimate_tokens(["INC-1104"])
+
+
+def test_budgeted_unknown_model_fails_closed_without_encoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: _FakeClient())
+    embedder = OpenAIEmbedding(
+        model="custom-model",
+        api_key="test-key",
+        dimensions=2,
+    )
+    router = EmbeddingRouter(
+        embedder,
+        daily_budget_usd=1.0,
+        cost_per_million_tokens=1.0,
+    )
+
+    assert embedder.embed_texts(["abc"]) == [[3.0, 0.0]]
+    with pytest.raises(TokenCountingUnavailableError, match="encoding_name"):
+        router.select(texts=["INC-1104"])
+
+    assert router.select(estimated_tokens=4).provider is embedder
+
+
+def test_custom_model_accepts_explicit_encoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: _FakeClient())
+    embedder = OpenAIEmbedding(
+        model="custom-model",
+        api_key="test-key",
+        dimensions=2,
+        encoding_name="cl100k_base",
+    )
+
+    assert embedder.estimate_tokens(["INC-1104"]) == 4
+
+
+def test_token_limit_splits_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient()
+    monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: client)
+    monkeypatch.setattr(
+        openai_provider,
+        "token_counts",
+        lambda texts, model, encoding_name=None: [8_000] * len(texts),
+    )
+    embedder = OpenAIEmbedding(api_key="test-key", batch_size=128, dimensions=2)
+
+    result = embedder.embed_texts_with_usage([f"text-{index}" for index in range(38)])
+    call_sizes = [
+        len(cast(list[str], call["input"])) for call in client.embeddings.calls
+    ]
+
+    assert call_sizes == [37, 1]
+    assert len(result.vectors) == 38
+
+
+def test_per_input_token_limit_rejected_before_api_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient()
+    monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: client)
+    monkeypatch.setattr(
+        openai_provider,
+        "token_counts",
+        lambda texts, model, encoding_name=None: [8_193],
+    )
+    embedder = OpenAIEmbedding(api_key="test-key")
+
+    with pytest.raises(ValueError, match="8193 tokens"):
+        embedder.embed_texts(["oversized"])
+    assert client.embeddings.calls == []
+
+
+def test_empty_string_rejected_before_api_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient()
+    monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: client)
+    embedder = OpenAIEmbedding(api_key="test-key")
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        embedder.embed_texts([""])
+    assert client.embeddings.calls == []
+
+
+def test_batch_size_cannot_exceed_api_input_limit() -> None:
+    with pytest.raises(ValueError, match="2048"):
+        OpenAIEmbedding(api_key="test-key", batch_size=2_049)
+
+
 def test_embedding_empty_input_does_not_call_api(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -104,4 +261,8 @@ def test_embedding_empty_input_does_not_call_api(
     embedder = OpenAIEmbedding(api_key="test-key")
 
     assert embedder.embed_texts([]) == []
+    result = embedder.embed_texts_with_usage([])
+    assert result.vectors == []
+    assert result.usage is not None
+    assert result.usage.total_tokens == 0
     assert client.embeddings.calls == []
