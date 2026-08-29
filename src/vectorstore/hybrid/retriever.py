@@ -29,6 +29,7 @@ from vectorstore.embeddings.policy import (
     ProviderSelection,
     SelectionReason,
 )
+from vectorstore.embeddings.pricing import PricingUnavailableError
 from vectorstore.embeddings.tokenization import TokenCountingUnavailableError
 from vectorstore.models import MetadataFilter, SearchResult
 from vectorstore.observability.base import RetrievalTraceObserver
@@ -317,7 +318,11 @@ class Retriever:
 
         try:
             selection = self._router.select("query", texts=[query])
-        except (NoProviderAvailableError, TokenCountingUnavailableError) as exc:
+        except (
+            NoProviderAvailableError,
+            PricingUnavailableError,
+            TokenCountingUnavailableError,
+        ) as exc:
             return _DenseOutcome(
                 results=[],
                 selection=None,
@@ -343,6 +348,8 @@ class Retriever:
         for attempt, candidate in enumerate(candidates):
             store = self._stores.get(candidate.spec.space_id)
             if store is None:
+                if candidate.provider is self._router.primary:
+                    self._router.release_reservation(candidate.reservation)
                 errors.append(
                     f"no vector store registered for space {candidate.spec.space_id!r}"
                 )
@@ -354,16 +361,19 @@ class Retriever:
                 vector = embedding.vector
             except Exception as exc:  # noqa: BLE001 - degrade, never fail retrieval
                 if candidate_is_primary:
-                    self._router.record_failure()
+                    self._router.record_failure(candidate.reservation)
                 errors.append(f"embedding failed ({candidate.spec.space_id}): {exc}")
                 continue
             if candidate_is_primary:
                 tokens = (
-                    embedding.usage.total_tokens
+                    embedding.usage.input_tokens
                     if embedding.usage is not None
                     else candidate.provider.estimate_tokens([query])
                 )
-                self._router.record_usage(tokens)
+                self._router.record_usage(
+                    tokens,
+                    reservation=candidate.reservation,
+                )
 
             try:
                 results = store.search(

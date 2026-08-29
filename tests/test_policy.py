@@ -1,12 +1,22 @@
 """Tests for the budget ledger, circuit breaker, and embedding router."""
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from decimal import Decimal
+from threading import Barrier
 from typing import override
 
 import pytest
 from conftest import FakeEmbedding
 
-from vectorstore import TokenCountingUnavailableError
+from vectorstore import (
+    EmbeddingPrice,
+    EmbeddingPricing,
+    PricingUnavailableError,
+    TokenCountingUnavailableError,
+    UsageStatus,
+    usd_to_nanos,
+)
 from vectorstore.embeddings.policy import (
     BudgetLedger,
     CircuitBreaker,
@@ -81,12 +91,56 @@ class TestEstimates:
         assert estimate_tokens([""]) == 0
 
     def test_estimate_cost_known_model(self) -> None:
-        assert estimate_cost_usd("text-embedding-3-small", 1_000_000) == pytest.approx(
-            0.02
+        assert estimate_cost_usd("text-embedding-3-small", 1_000_000) == Decimal("0.02")
+
+    def test_estimate_cost_includes_legacy_openai_model(self) -> None:
+        assert estimate_cost_usd("text-embedding-ada-002", 1_000_000) == Decimal("0.10")
+
+    def test_estimate_cost_unknown_model_fails_closed(self) -> None:
+        with pytest.raises(PricingUnavailableError, match="mystery-model"):
+            estimate_cost_usd("mystery-model", 1_000_000)
+
+    def test_pricing_is_provider_and_processing_mode_aware(self) -> None:
+        pricing = EmbeddingPricing(
+            (
+                EmbeddingPrice.from_usd_per_million(
+                    "custom",
+                    "text-embedding-3-small",
+                    "0.75",
+                    processing_mode="batch",
+                    version="contract-2026-08",
+                ),
+            )
         )
 
-    def test_estimate_cost_unknown_model_is_zero(self) -> None:
-        assert estimate_cost_usd("mystery-model", 1_000_000) == 0.0
+        assert estimate_cost_usd(
+            "text-embedding-3-small",
+            2_000_000,
+            provider="custom",
+            processing_mode="batch",
+            pricing=pricing,
+        ) == Decimal("1.5")
+        with pytest.raises(PricingUnavailableError):
+            pricing.require("openai", "text-embedding-3-small", "batch")
+
+    @pytest.mark.parametrize("value", [-1, float("nan"), float("inf"), True])
+    def test_money_rejects_negative_and_non_finite_values(self, value: float) -> None:
+        with pytest.raises(ValueError):
+            usd_to_nanos(value)
+
+    def test_per_token_charge_uses_exact_integer_nanodollars(self) -> None:
+        price = EmbeddingPrice.from_usd_per_million(
+            "openai",
+            "text-embedding-3-small",
+            "0.02",
+            version="test",
+        )
+
+        charge = price.charge(7)
+
+        assert charge.rate_nanos_per_million == 20_000_000
+        assert charge.charge_nanos == 140
+        assert charge.usd == Decimal("0.00000014")
 
 
 class TestInMemoryBudgetLedger:
@@ -94,7 +148,7 @@ class TestInMemoryBudgetLedger:
         ledger = InMemoryBudgetLedger(now=make_clock())
         ledger.record("openai", 1000, 0.01)
         ledger.record("openai", 500, 0.005)
-        assert ledger.spent_today() == pytest.approx(0.015)
+        assert ledger.spent_today() == Decimal("0.015")
         assert ledger.tokens_today("openai") == 1500
 
     def test_day_rollover_resets_daily_but_not_monthly(self) -> None:
@@ -103,7 +157,7 @@ class TestInMemoryBudgetLedger:
         ledger.record("openai", 1000, 0.01)
         clock.advance_days(1)
         assert ledger.spent_today() == 0.0
-        assert ledger.spent_month() == pytest.approx(0.01)
+        assert ledger.spent_month() == Decimal("0.01")
 
     def test_month_rollover_resets_monthly(self) -> None:
         clock = make_clock("2026-08-31T12:00:00+00:00")
@@ -118,6 +172,52 @@ class TestInMemoryBudgetLedger:
             ledger.record("openai", -1, 0.0)
         with pytest.raises(ValueError):
             ledger.record("openai", 0, -0.1)
+
+    def test_reservations_make_parallel_admission_atomic(self) -> None:
+        router = EmbeddingRouter(
+            primary_embedding(),
+            fallback_embedding(),
+            daily_budget_usd="1.00",
+            cost_per_million_tokens="1.00",
+        )
+        barrier = Barrier(3)
+
+        def select() -> SelectionReason:
+            barrier.wait()
+            return router.select(estimated_tokens=600_000).reason
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(select) for _ in range(2)]
+            barrier.wait()
+            reasons = [future.result() for future in futures]
+
+        assert reasons.count(SelectionReason.PRIMARY) == 1
+        assert reasons.count(SelectionReason.BUDGET_DAILY_EXCEEDED) == 1
+        assert router.ledger.spent_today() == Decimal("0.6")
+
+    def test_expired_reservation_no_longer_consumes_budget(self) -> None:
+        clock = make_clock()
+        ledger = InMemoryBudgetLedger(now=clock)
+        router = EmbeddingRouter(
+            primary_embedding(),
+            fallback_embedding(),
+            ledger=ledger,
+            daily_budget_usd="1.00",
+            cost_per_million_tokens="1.00",
+            reservation_ttl_seconds=10,
+        )
+        first = router.select(estimated_tokens=1_000_000)
+        assert first.reservation is not None
+        assert (
+            router.select(estimated_tokens=1).reason
+            is SelectionReason.BUDGET_DAILY_EXCEEDED
+        )
+
+        clock.advance_seconds(11)
+        replacement = router.select(estimated_tokens=1_000_000)
+
+        assert replacement.reason is SelectionReason.PRIMARY
+        assert ledger.usage_records()[0].status is UsageStatus.EXPIRED
 
 
 class TestCircuitBreaker:
@@ -210,14 +310,14 @@ class TestEmbeddingRouterDecisionTable:
     def test_breaker_open_falls_back(self) -> None:
         router = self.make_router()
         router.record_failure()
-        selection = router.select()
+        selection = router.select(estimated_tokens=0)
         assert selection.reason is SelectionReason.OPENAI_UNAVAILABLE
         assert selection.spec.provider == "st"
 
     def test_rate_limited_falls_back(self) -> None:
         router = self.make_router()
         router.record_rate_limit(retry_after_seconds=30.0)
-        selection = router.select()
+        selection = router.select(estimated_tokens=0)
         assert selection.reason is SelectionReason.OPENAI_RATE_LIMITED
 
     def test_recovers_to_primary_after_cooldown(self) -> None:
@@ -225,25 +325,25 @@ class TestEmbeddingRouterDecisionTable:
         router = self.make_router(clock=clock)
         router.record_failure()
         clock.advance_seconds(61)
-        assert router.select().reason is SelectionReason.PRIMARY
+        assert router.select(estimated_tokens=0).reason is SelectionReason.PRIMARY
 
     def test_success_resets_breaker(self) -> None:
         router = self.make_router()
         router.record_failure()
         router.record_usage(tokens=100)
-        assert router.select().reason is SelectionReason.PRIMARY
+        assert router.select(estimated_tokens=0).reason is SelectionReason.PRIMARY
 
     def test_daily_budget_exceeded(self) -> None:
         router = self.make_router(daily_budget_usd=0.01, cost_per_million_tokens=0.02)
         router.ledger.record("fake", 600_000, 0.012)
-        selection = router.select()
+        selection = router.select(estimated_tokens=0)
         assert selection.reason is SelectionReason.BUDGET_DAILY_EXCEEDED
         assert selection.spec.provider == "st"
 
     def test_spend_exactly_at_daily_budget_stays_primary(self) -> None:
         router = self.make_router(daily_budget_usd=0.01, cost_per_million_tokens=0.02)
         router.ledger.record("fake", 500_000, 0.01)
-        assert router.select().reason is SelectionReason.PRIMARY
+        assert router.select(estimated_tokens=0).reason is SelectionReason.PRIMARY
 
     def test_estimated_call_cost_can_tip_daily_budget(self) -> None:
         router = self.make_router(daily_budget_usd=0.01, cost_per_million_tokens=0.02)
@@ -316,17 +416,126 @@ class TestEmbeddingRouterDecisionTable:
         )
 
     def test_negative_explicit_token_estimate_rejected(self) -> None:
-        router = self.make_router(daily_budget_usd=1.0)
-        with pytest.raises(ValueError, match="must not be negative"):
+        router = self.make_router(
+            daily_budget_usd=1.0,
+            cost_per_million_tokens=1.0,
+        )
+        with pytest.raises(ValueError, match="non-negative integer"):
             router.select(estimated_tokens=-1)
 
     def test_record_usage_computes_cost_from_rate(self) -> None:
         router = self.make_router(cost_per_million_tokens=0.02)
         router.record_usage(tokens=1_000_000)
-        assert router.ledger.spent_today() == pytest.approx(0.02)
+        assert router.ledger.spent_today() == Decimal("0.02")
+
+    def test_reconciles_reserved_estimate_with_authoritative_usage(self) -> None:
+        ledger = InMemoryBudgetLedger(now=make_clock())
+        router = EmbeddingRouter(
+            primary_embedding(),
+            fallback_embedding(),
+            ledger=ledger,
+            daily_budget_usd="1.00",
+            cost_per_million_tokens="1.00",
+        )
+        selection = router.select(estimated_tokens=800_000)
+        assert selection.reservation is not None
+        assert ledger.spent_today() == Decimal("0.8")
+
+        charge = router.record_usage(
+            400_000,
+            reservation=selection.reservation,
+        )
+
+        assert charge.usd == Decimal("0.4")
+        assert ledger.spent_today() == Decimal("0.4")
+        record = ledger.usage_records()[0]
+        assert record.status is UsageStatus.COMMITTED
+        assert record.charge.provider == "fake"
+        assert record.charge.model == "hashed-bow"
+        assert record.charge.price_version == "explicit-rate"
+
+    def test_failed_call_releases_reserved_spend(self) -> None:
+        ledger = InMemoryBudgetLedger(now=make_clock())
+        router = EmbeddingRouter(
+            primary_embedding(),
+            fallback_embedding(),
+            ledger=ledger,
+            daily_budget_usd="1.00",
+            cost_per_million_tokens="1.00",
+        )
+        selection = router.select(estimated_tokens=800_000)
+        assert selection.reservation is not None
+
+        router.record_failure(selection.reservation)
+
+        assert ledger.spent_today_nanos() == 0
+        assert ledger.usage_records()[0].status is UsageStatus.RELEASED
+
+    def test_budgeted_selection_requires_an_input_estimate(self) -> None:
+        router = self.make_router(
+            daily_budget_usd=1.0,
+            cost_per_million_tokens=1.0,
+        )
+        with pytest.raises(ValueError, match="texts or estimated_tokens"):
+            router.select()
+
+    def test_custom_pricing_catalog_is_used(self) -> None:
+        pricing = EmbeddingPricing(
+            (
+                EmbeddingPrice.from_usd_per_million(
+                    "fake",
+                    "hashed-bow",
+                    "0.50",
+                    version="private-contract-v2",
+                ),
+            )
+        )
+        router = EmbeddingRouter(
+            primary_embedding(),
+            fallback_embedding(),
+            daily_budget_usd="0.50",
+            pricing=pricing,
+        )
+
+        selection = router.select(estimated_tokens=1_000_000)
+
+        assert selection.reason is SelectionReason.PRIMARY
+        assert selection.reservation is not None
+        assert selection.reservation.charge.price_version == "private-contract-v2"
+
+    def test_unbudgeted_unknown_provider_is_recorded_as_unpriced(self) -> None:
+        ledger = InMemoryBudgetLedger(now=make_clock())
+        router = EmbeddingRouter(primary_embedding(), ledger=ledger)
+
+        charge = router.record_usage(123)
+
+        assert not charge.is_priced
+        assert ledger.spent_today_nanos() == 0
+        assert ledger.tokens_today("fake", "hashed-bow") == 123
 
 
 class TestEmbeddingRouterValidation:
+    def test_budget_with_unknown_price_fails_closed(self) -> None:
+        with pytest.raises(PricingUnavailableError, match="hashed-bow"):
+            EmbeddingRouter(primary_embedding(), daily_budget_usd="1.00")
+
+    @pytest.mark.parametrize("value", [-1, float("nan"), float("inf")])
+    def test_invalid_budget_is_rejected(self, value: float) -> None:
+        with pytest.raises(ValueError, match="daily_budget_usd"):
+            EmbeddingRouter(
+                primary_embedding(),
+                daily_budget_usd=value,
+                cost_per_million_tokens="1.00",
+            )
+
+    def test_pricing_and_legacy_rate_are_mutually_exclusive(self) -> None:
+        with pytest.raises(ValueError, match="either pricing"):
+            EmbeddingRouter(
+                primary_embedding(),
+                pricing=EmbeddingPricing(),
+                cost_per_million_tokens="1.00",
+            )
+
     def test_no_fallback_raises_when_primary_rejected(self) -> None:
         router = EmbeddingRouter(primary_embedding(), primary_enabled=False)
         with pytest.raises(NoProviderAvailableError) as excinfo:

@@ -18,3 +18,4 @@ wheels/
 
 # misc
 data
+*.plan.md

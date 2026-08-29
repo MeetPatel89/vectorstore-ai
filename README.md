@@ -42,7 +42,8 @@ Two providers ship with the library:
    `CircuitBreaker` is open after consecutive failures or during a 429
    backoff window.
 4. `budget_daily_exceeded` / `budget_monthly_exceeded` — the `BudgetLedger`
-   shows `spent + estimated cost > budget`.
+   atomically rejects a reservation whose predicted charge would exceed the
+   configured limit.
 5. `primary` — otherwise.
 
 ```python
@@ -61,19 +62,25 @@ router = EmbeddingRouter(
 )
 
 selection = router.select("query", texts=["how do I rotate certificates?"])
-embedding = selection.provider.embed_query_with_usage("how do I rotate certificates?")
+try:
+    embedding = selection.provider.embed_query_with_usage(
+        "how do I rotate certificates?"
+    )
+except Exception:
+    if selection.provider is router.primary:
+        router.record_failure(selection.reservation)
+    raise
 vector = embedding.vector
 # selection.spec.space_id tells you which vector index to search;
 # spaces are never mixed.
 
 if selection.provider is router.primary:
     tokens = (
-        embedding.usage.total_tokens
+        embedding.usage.input_tokens
         if embedding.usage is not None
         else selection.provider.estimate_tokens(["how do I rotate certificates?"])
     )
-    router.record_usage(tokens=tokens)
-router.record_failure()  # feed the circuit breaker on errors
+    router.record_usage(tokens=tokens, reservation=selection.reservation)
 ```
 
 Because the two providers occupy different embedding spaces, keep one vector
@@ -81,12 +88,41 @@ store per `spec.space_id` and route queries to the store matching the
 selected provider.
 
 OpenAI budget preflight uses the model's `tiktoken` encoding rather than a
-character-count approximation. Successful calls are reconciled with the
-embedding API's reported `usage.total_tokens`; `Retriever` performs this
-accounting automatically. Custom model aliases can supply
+character-count approximation. The router atomically reserves the predicted
+charge before a call, and successful calls reconcile that reservation with the
+embedding API's reported input-token usage; `Retriever` performs this
+accounting automatically. Failed calls release their reservation, while stale
+reservations expire after five minutes by default. Custom model aliases can supply
 `OpenAIEmbedding(..., encoding_name="cl100k_base")`; budgeted routing fails
 closed with `TokenCountingUnavailableError` when no model-to-encoding mapping
 is available.
+
+Pricing is provider-, model-, and processing-mode-aware. The built-in,
+versioned OpenAI catalog covers `text-embedding-3-small`,
+`text-embedding-3-large`, and `text-embedding-ada-002`. Unknown prices also
+fail closed whenever a budget is enabled. Supply a private or custom rate
+without binary floating-point arithmetic:
+
+```python
+from vectorstore import EmbeddingPrice, EmbeddingPricing
+
+pricing = EmbeddingPricing(
+    (
+        EmbeddingPrice.from_usd_per_million(
+            "my-provider",
+            "my-embedding-model",
+            "0.075",
+            version="contract-2026-08",
+        ),
+    )
+)
+```
+
+Budget limits and charges are converted to integer nanodollars. Ledger audit
+rows retain provider, model, processing mode, authoritative tokens, applied
+rate, price version, computed charge, and reservation status. The inline
+charge is therefore deterministic and auditable; provider invoices can still
+be reconciled separately against organization billing data.
 
 ## Document catalog (structured find, lexical search, ledgers)
 
@@ -110,8 +146,8 @@ dense vectors themselves, which stay in per-space vector stores:
   `stale_chunk_ids(spec)` returns chunks whose vector is missing or was
   built from outdated content, so re-embedding is incremental.
 - **Durable budget ledger**: the catalog satisfies the `BudgetLedger`
-  protocol, so it can be passed directly to an `EmbeddingRouter` for spend
-  tracking that survives restarts.
+  protocol, so it can atomically reserve and reconcile spend across processes.
+  Exact nanodollar accounting and complete pricing provenance survive restarts.
 
 Authorization is a `RetrievalScope(tenant_id, visibility)` enforced inside
 the SQL of every candidate generator — never by post-filtering:

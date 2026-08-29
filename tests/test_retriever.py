@@ -17,6 +17,8 @@ from vectorstore import (
     CatalogChunk,
     CatalogDocument,
     Chunk,
+    EmbeddingPrice,
+    EmbeddingPricing,
     EmbeddingResult,
     EmbeddingRouter,
     EmbeddingUsage,
@@ -30,6 +32,7 @@ from vectorstore import (
     Retriever,
     RetrieverConfig,
     SqliteDocumentCatalog,
+    UsageStatus,
     VectorStore,
     build_retriever,
 )
@@ -243,7 +246,12 @@ class TestHybridRetrieve:
             model="primary-model",
         )
         ledger = InMemoryBudgetLedger()
-        router = EmbeddingRouter(primary, ledger=ledger)
+        router = EmbeddingRouter(
+            primary,
+            ledger=ledger,
+            daily_budget_usd="1.00",
+            cost_per_million_tokens="0.02",
+        )
         retriever = Retriever(
             catalog=catalog,
             stores={primary.spec.space_id: make_store(primary)},
@@ -254,6 +262,10 @@ class TestHybridRetrieve:
 
         assert result.provider == "openai-fake"
         assert ledger.tokens_today("openai-fake") == 321
+        record = ledger.usage_records()[0]
+        assert record.status is UsageStatus.COMMITTED
+        assert record.charge.tokens == 321
+        assert record.charge.model == "primary-model"
 
     def test_filter_pushdown_restricts_both_branches(
         self, catalog: SqliteDocumentCatalog, primary: FakeEmbedding
@@ -313,6 +325,39 @@ class TestDegradation:
         assert result.degraded is False
         assert any("embedding failed" in message for message in result.errors)
         assert result.hits
+
+    def test_primary_failure_releases_budget_reservation(
+        self,
+        catalog: SqliteDocumentCatalog,
+        fallback: FakeEmbedding,
+    ) -> None:
+        broken_primary = FailingEmbedding(
+            dimension=64,
+            provider="openai-fake",
+            model="primary-model",
+        )
+        ledger = InMemoryBudgetLedger()
+        router = EmbeddingRouter(
+            broken_primary,
+            fallback,
+            ledger=ledger,
+            daily_budget_usd="1.00",
+            cost_per_million_tokens="1.00",
+        )
+        retriever = Retriever(
+            catalog=catalog,
+            stores={
+                broken_primary.spec.space_id: NumpyVectorStore(),
+                fallback.spec.space_id: make_store(fallback),
+            },
+            router=router,
+        )
+
+        result = retriever.retrieve("payment reconciliation reports")
+
+        assert result.provider == "local-fake"
+        assert ledger.spent_today_nanos() == 0
+        assert ledger.usage_records()[0].status is UsageStatus.RELEASED
 
     def test_router_selected_fallback_is_not_marked_degraded(
         self,
@@ -459,10 +504,40 @@ class TestBuildRetriever:
             fallback=fallback,
             fallback_store=make_store(fallback),
             daily_budget_usd=5.0,
+            cost_per_million_tokens=0.02,
         )
         result = retriever.retrieve("payment reconciliation")
         assert result.provider == "openai-fake"
         assert result.hits
+
+    def test_forwards_custom_pricing_to_composed_router(
+        self,
+        catalog: SqliteDocumentCatalog,
+        primary: FakeEmbedding,
+    ) -> None:
+        pricing = EmbeddingPricing(
+            (
+                EmbeddingPrice.from_usd_per_million(
+                    primary.spec.provider,
+                    primary.spec.model,
+                    "0.50",
+                    version="retriever-contract-v1",
+                ),
+            )
+        )
+        retriever = build_retriever(
+            catalog,
+            primary=primary,
+            primary_store=make_store(primary),
+            daily_budget_usd="1.00",
+            pricing=pricing,
+        )
+
+        result = retriever.retrieve("payment reconciliation")
+
+        assert result.provider == "openai-fake"
+        record = catalog.usage_records()[0]
+        assert record.charge.price_version == "retriever-contract-v1"
 
     def test_lexical_only_when_no_providers(
         self, catalog: SqliteDocumentCatalog

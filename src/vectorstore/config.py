@@ -13,6 +13,7 @@ from __future__ import annotations
 from vectorstore.catalog.base import DocumentCatalog
 from vectorstore.embeddings.base import EmbeddingProvider
 from vectorstore.embeddings.policy import BudgetLedger, CircuitBreaker, EmbeddingRouter
+from vectorstore.embeddings.pricing import EmbeddingPricing, UsdAmount
 from vectorstore.hybrid.query import QueryAnalyzer
 from vectorstore.hybrid.retriever import Retriever, RetrieverConfig
 from vectorstore.observability.base import RetrievalTraceObserver
@@ -43,8 +44,12 @@ def build_retriever(
     config: RetrieverConfig | None = None,
     primary_enabled: bool = True,
     override: str | None = None,
-    daily_budget_usd: float | None = None,
-    monthly_budget_usd: float | None = None,
+    daily_budget_usd: UsdAmount | None = None,
+    monthly_budget_usd: UsdAmount | None = None,
+    pricing: EmbeddingPricing | None = None,
+    processing_mode: str = "standard",
+    cost_per_million_tokens: UsdAmount | None = None,
+    reservation_ttl_seconds: float = 300.0,
 ) -> Retriever:
     """Compose a :class:`~vectorstore.hybrid.retriever.Retriever`.
 
@@ -75,6 +80,10 @@ def build_retriever(
             override=override,
             daily_budget_usd=daily_budget_usd,
             monthly_budget_usd=monthly_budget_usd,
+            pricing=pricing,
+            processing_mode=processing_mode,
+            cost_per_million_tokens=cost_per_million_tokens,
+            reservation_ttl_seconds=reservation_ttl_seconds,
         )
 
     if router is not None:

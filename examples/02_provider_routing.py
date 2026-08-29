@@ -21,6 +21,7 @@ from vectorstore import (
 DEMO_QUERY = "users can't log in after certificate rotation"
 DAILY_BUDGET_USD = 0.001
 SIMULATED_SPEND_USD = 0.002
+SIMULATED_RATE_USD_PER_MILLION = 1.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -65,6 +66,7 @@ def main() -> int:
         fallback,
         ledger=budget_ledger,
         daily_budget_usd=DAILY_BUDGET_USD,
+        cost_per_million_tokens=SIMULATED_RATE_USD_PER_MILLION,
     )
     budget_router.record_usage(
         tokens=2_000,

@@ -19,9 +19,15 @@ same storage.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Protocol, runtime_checkable
 
 from vectorstore.embeddings.base import EmbeddingSpec
+from vectorstore.embeddings.policy import (
+    BudgetReservation,
+    BudgetReservationDecision,
+)
+from vectorstore.embeddings.pricing import EmbeddingCharge, UsdAmount
 from vectorstore.models import MetadataFilter, MetadataValue
 from vectorstore.records import content_hash as _content_hash
 
@@ -223,11 +229,49 @@ class DocumentCatalog(Protocol):
 
     # -- budget ledger (BudgetLedger protocol) -----------------------------
 
-    def record(self, provider: str, tokens: int, usd: float) -> None:
-        """Record one embedding usage event."""
+    def reserve(
+        self,
+        charge: EmbeddingCharge,
+        *,
+        daily_limit_nanos: int | None,
+        monthly_limit_nanos: int | None,
+        ttl_seconds: float,
+    ) -> BudgetReservationDecision:
+        """Atomically reserve predicted spend under the configured limits."""
 
-    def spent_today(self) -> float:
-        """Total estimated USD spent during the current UTC day."""
+    def commit(
+        self,
+        reservation: BudgetReservation,
+        actual_charge: EmbeddingCharge,
+    ) -> None:
+        """Reconcile a reservation with authoritative token usage."""
 
-    def spent_month(self) -> float:
-        """Total estimated USD spent during the current UTC month."""
+    def release(self, reservation: BudgetReservation) -> None:
+        """Release predicted spend after a skipped or failed call."""
+
+    def record(
+        self,
+        charge_or_provider: EmbeddingCharge | str,
+        tokens: int | None = None,
+        usd: UsdAmount | None = None,
+        *,
+        model: str = "<unspecified>",
+        processing_mode: str = "standard",
+        price_version: str = "legacy-explicit-total",
+    ) -> None:
+        """Record one committed embedding usage event."""
+
+    def spent_today_nanos(self) -> int:
+        """Return committed plus reserved nanodollars for the current UTC day."""
+
+    def spent_month_nanos(self) -> int:
+        """Return committed plus reserved nanodollars for the current UTC month."""
+
+    def spent_today(self) -> Decimal:
+        """Exact committed plus reserved USD spend for the current UTC day."""
+
+    def spent_month(self) -> Decimal:
+        """Exact committed plus reserved USD spend for the current UTC month."""
+
+    def tokens_today(self, provider: str, model: str | None = None) -> int:
+        """Return committed tokens today, optionally filtered by model."""

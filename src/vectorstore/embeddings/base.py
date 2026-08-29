@@ -61,7 +61,11 @@ class EmbeddingSpec:
 
 @dataclass(frozen=True)
 class EmbeddingUsage:
-    """Token usage reported for one logical embedding operation."""
+    """Input-token usage reported for one logical embedding operation.
+
+    ``total_tokens`` is retained for compatibility with provider response
+    terminology. Embedding charges use :attr:`input_tokens`.
+    """
 
     total_tokens: int
 
@@ -72,6 +76,11 @@ class EmbeddingUsage:
             or self.total_tokens < 0
         ):
             raise ValueError("total_tokens must be a non-negative integer")
+
+    @property
+    def input_tokens(self) -> int:
+        """The billable input-token count."""
+        return self.total_tokens
 
 
 @dataclass(frozen=True)

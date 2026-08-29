@@ -27,7 +27,9 @@ class _FakeEmbeddingsResource:
         ]
         usage = SimpleNamespace(
             prompt_tokens=sum(len(text) for text in inputs),
-            total_tokens=sum(len(text) for text in inputs),
+            # Deliberately different: embedding cost accounting is based on
+            # billable input/prompt tokens, not a generic total field.
+            total_tokens=sum(len(text) for text in inputs) + 100,
         )
         return SimpleNamespace(data=list(reversed(items)), usage=usage)
 
@@ -128,6 +130,13 @@ def test_openai_embedding_uses_known_model_dimension(
             api_key="test-key",
         ).dimension
         == 3072
+    )
+    assert (
+        OpenAIEmbedding(
+            model="text-embedding-ada-002",
+            api_key="test-key",
+        ).dimension
+        == 1536
     )
 
 

@@ -1,8 +1,12 @@
 """Tests for the SQLite document catalog: structured, lexical, ledgers, scope."""
 
+import sqlite3
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from conftest import FakeEmbedding
@@ -17,7 +21,13 @@ from vectorstore.catalog import (
 )
 from vectorstore.catalog.sqlite_catalog import _fts_match_expression
 from vectorstore.embeddings.base import EmbeddingSpec
-from vectorstore.embeddings.policy import BudgetLedger, EmbeddingRouter, SelectionReason
+from vectorstore.embeddings.policy import (
+    BudgetLedger,
+    EmbeddingRouter,
+    SelectionReason,
+    UsageStatus,
+)
+from vectorstore.embeddings.pricing import EmbeddingPrice
 from vectorstore.records import content_hash
 
 
@@ -425,7 +435,7 @@ class TestDurableBudgetLedger:
         with SqliteDocumentCatalog(now=clock) as catalog:
             catalog.record("openai", 1000, 0.01)
             catalog.record("openai", 500, 0.005)
-            assert catalog.spent_today() == pytest.approx(0.015)
+            assert catalog.spent_today() == Decimal("0.015")
             assert catalog.tokens_today("openai") == 1500
 
     def test_day_rollover_resets_daily_but_not_monthly(self) -> None:
@@ -434,7 +444,7 @@ class TestDurableBudgetLedger:
             catalog.record("openai", 1000, 0.01)
             clock.advance_days(1)
             assert catalog.spent_today() == 0.0
-            assert catalog.spent_month() == pytest.approx(0.01)
+            assert catalog.spent_month() == Decimal("0.01")
 
     def test_month_rollover_resets_monthly(self) -> None:
         clock = FakeClock("2026-08-31T12:00:00+00:00")
@@ -459,9 +469,85 @@ class TestDurableBudgetLedger:
                 daily_budget_usd=0.01,
                 cost_per_million_tokens=0.02,
             )
-            assert router.select().reason is SelectionReason.PRIMARY
+            assert router.select(estimated_tokens=0).reason is SelectionReason.PRIMARY
             catalog.record("fake", 600_000, 0.012)
-            assert router.select().reason is SelectionReason.BUDGET_DAILY_EXCEEDED
+            assert (
+                router.select(estimated_tokens=0).reason
+                is SelectionReason.BUDGET_DAILY_EXCEEDED
+            )
+
+    def test_persists_exact_price_provenance(self) -> None:
+        price = EmbeddingPrice.from_usd_per_million(
+            "openai",
+            "text-embedding-3-small",
+            "0.02",
+            version="catalog-test-v1",
+        )
+        with SqliteDocumentCatalog() as catalog:
+            catalog.record(price.charge(17))
+
+            record = catalog.usage_records()[0]
+
+            assert record.status is UsageStatus.COMMITTED
+            assert record.charge.provider == "openai"
+            assert record.charge.model == "text-embedding-3-small"
+            assert record.charge.processing_mode == "standard"
+            assert record.charge.tokens == 17
+            assert record.charge.rate_nanos_per_million == 20_000_000
+            assert record.charge.charge_nanos == 340
+            assert record.charge.price_version == "catalog-test-v1"
+            assert catalog.spent_today() == Decimal("0.00000034")
+
+    def test_sqlite_reservation_is_atomic_across_connections(
+        self, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "atomic-budget.db"
+        with SqliteDocumentCatalog(path):
+            pass
+        barrier = Barrier(3)
+
+        def select() -> SelectionReason:
+            with SqliteDocumentCatalog(path) as ledger:
+                router = EmbeddingRouter(
+                    FakeEmbedding(),
+                    FakeEmbedding(provider="st", model="fallback", dimension=8),
+                    ledger=ledger,
+                    daily_budget_usd="1.00",
+                    cost_per_million_tokens="1.00",
+                )
+                barrier.wait()
+                return router.select(estimated_tokens=600_000).reason
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(select) for _ in range(2)]
+            barrier.wait()
+            reasons = [future.result() for future in futures]
+
+        assert reasons.count(SelectionReason.PRIMARY) == 1
+        assert reasons.count(SelectionReason.BUDGET_DAILY_EXCEEDED) == 1
+        with SqliteDocumentCatalog(path) as catalog:
+            assert catalog.spent_today() == Decimal("0.6")
+            records = catalog.usage_records()
+            assert len(records) == 1
+            assert records[0].status is UsageStatus.RESERVED
+
+    def test_reconciles_reserved_sqlite_charge(self) -> None:
+        with SqliteDocumentCatalog() as catalog:
+            router = EmbeddingRouter(
+                FakeEmbedding(),
+                ledger=catalog,
+                daily_budget_usd="1.00",
+                cost_per_million_tokens="1.00",
+            )
+            selection = router.select(estimated_tokens=900_000)
+            assert selection.reservation is not None
+
+            router.record_usage(125_000, reservation=selection.reservation)
+
+            assert catalog.spent_today() == Decimal("0.125")
+            record = catalog.usage_records()[0]
+            assert record.status is UsageStatus.COMMITTED
+            assert record.charge.tokens == 125_000
 
 
 class TestPersistence:
@@ -479,7 +565,36 @@ class TestPersistence:
             hits = reopened.search_lexical("rotate credentials")
             assert hits[0].chunk_id == "KB-77:0"
             assert "KB-77:0" in reopened.embedding_state(spec.space_id)
-            assert reopened.spent_today() == pytest.approx(0.001)
+            assert reopened.spent_today() == Decimal("0.001")
+
+    def test_legacy_float_ledger_is_migrated(self, tmp_path: Path) -> None:
+        path = tmp_path / "legacy-ledger.db"
+        connection = sqlite3.connect(path)
+        connection.execute(
+            """
+            CREATE TABLE embedding_usage (
+                date TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                tokens INTEGER NOT NULL,
+                estimated_usd REAL NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO embedding_usage VALUES (?, ?, ?, ?)",
+            ("2026-08-23", "openai", 500_000, 0.01),
+        )
+        connection.commit()
+        connection.close()
+
+        with SqliteDocumentCatalog(path, now=FakeClock()) as catalog:
+            assert catalog.spent_today() == Decimal("0.01")
+            record = catalog.usage_records()[0]
+            assert record.status is UsageStatus.COMMITTED
+            assert record.charge.model == "<legacy>"
+            assert record.charge.tokens == 500_000
+            assert record.charge.charge_nanos == 10_000_000
+            assert record.charge.price_version == "legacy-float-migration"
 
 
 class TestLexicalUnavailable:

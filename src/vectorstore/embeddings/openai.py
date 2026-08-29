@@ -21,6 +21,7 @@ from .tokenization import (
 _MODEL_DIMENSIONS = {
     "text-embedding-3-small": 1536,
     "text-embedding-3-large": 3072,
+    "text-embedding-ada-002": 1536,
 }
 _MAX_INPUTS_PER_REQUEST = 2_048
 _MAX_TOKENS_PER_INPUT = 8_192
@@ -126,7 +127,7 @@ class OpenAIEmbedding(EmbeddingProvider):
                 )
             embeddings.extend(_as_float_list(item.embedding) for item in ordered)
             try:
-                batch_tokens = response.usage.total_tokens
+                batch_tokens = response.usage.prompt_tokens
             except AttributeError as exc:
                 raise RuntimeError(
                     "OpenAI embedding response did not include valid token usage"
