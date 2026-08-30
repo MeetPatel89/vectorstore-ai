@@ -60,3 +60,22 @@ installed and configured:
 uv run python examples/02_provider_routing.py --provider openai
 uv run python examples/02_provider_routing.py --provider local
 ```
+
+## Phase 3: document catalog
+
+Run the SQLite catalog walkthrough offline:
+
+```bash
+uv run python examples/03_document_catalog.py
+```
+
+It ingests the full corpus into a temporary `SqliteDocumentCatalog`, combines
+structured filters with retrieval scope, and uses FTS5 to search exact
+identifiers such as `INC-1104` and `CHG-2407`. It also records the current
+content hashes in the embedding lifecycle ledger, edits one chunk, and shows
+that only the changed chunk requires re-embedding. Finally, it closes and
+reopens the database to demonstrate that embedding spend is durable.
+
+The temporary database is removed when the demo exits. This phase does not
+embed text or call an external provider, so it has no API key, network, or
+optional dependency requirements.

@@ -395,12 +395,13 @@ automatically unless the `local` extra is installed.
 ## Demo
 
 For offline-first, progressive walkthroughs of semantic projection, dense
-search, embedding-space safety, and provider fallback policy, see the
-[retrieval demos](examples/README.md):
+search, embedding-space safety, provider fallback policy, and the document
+catalog, see the [retrieval demos](examples/README.md):
 
 ```bash
 uv run python examples/01_dense_search.py
 uv run python examples/02_provider_routing.py
+uv run python examples/03_document_catalog.py
 ```
 
 The original backend-selection demo below uses OpenAI embeddings.

@@ -19,3 +19,4 @@ wheels/
 # misc
 data
 *.plan.md
+notebooks/
