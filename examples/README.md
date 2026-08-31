@@ -79,3 +79,31 @@ reopens the database to demonstrate that embedding spend is durable.
 The temporary database is removed when the demo exits. This phase does not
 embed text or call an external provider, so it has no API key, network, or
 optional dependency requirements.
+
+## Phase 4: hybrid retrieval end to end
+
+Run the complete retrieval walkthrough offline:
+
+```bash
+uv run python examples/04_hybrid_retrieval.py
+```
+
+One `build_retriever()` composition connects the catalog, provider router,
+per-space NumPy stores, query analyzer, and a trace observer. The demo walks
+through a natural query with dense/lexical RRF ranks, an identifier query with
+a boosted lexical weight, a retrieval scope that narrows candidate generation,
+and a simulated provider outage that degrades cleanly to lexical search. Each
+result prints provider selection, signal weights and ranks, timings, and errors.
+
+The default hash embedders are deterministic and fully offline. As in the
+earlier demos, the primary can be replaced with a real provider:
+
+```bash
+uv run python examples/04_hybrid_retrieval.py --provider openai
+uv run python examples/04_hybrid_retrieval.py --provider local
+```
+
+The OpenAI option requires `OPENAI_API_KEY`. The local option requires the
+`local` extra and may download its model the first time it runs. Rankings can
+vary by provider, while query classification, scope enforcement, and trace
+fields remain the same.
