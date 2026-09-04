@@ -381,6 +381,27 @@ class TestChunksAndDeletion:
         hits = catalog.search_lexical("payment reconciliation reports")
         assert all(hit.chunk_id != "INC-1104:0" for hit in hits)
 
+    def test_replace_chunks_retains_current_state_and_prunes_removed(
+        self, catalog: SqliteDocumentCatalog
+    ) -> None:
+        spec = EmbeddingSpec(provider="fake", model="m", dimension=8)
+        original = CHUNKS[0]
+        catalog.mark_embedded(original.chunk_id, spec, _required_hash(original))
+
+        assert catalog.replace_chunks(original.doc_id, [original]) == []
+        assert original.chunk_id in catalog.embedding_state(spec.space_id)
+
+        replacement = CatalogChunk(
+            chunk_id="INC-1104:new",
+            doc_id=original.doc_id,
+            text="Replacement payment report procedure",
+        )
+        removed = catalog.replace_chunks(original.doc_id, [replacement])
+
+        assert removed == [original.chunk_id]
+        assert catalog.get_chunks([original.chunk_id]) == []
+        assert catalog.embedding_state(spec.space_id) == {}
+
 
 class TestEmbeddingLifecycleLedger:
     SPEC = EmbeddingSpec(
@@ -447,6 +468,18 @@ class TestEmbeddingLifecycleLedger:
         states = catalog.embedding_state(self.SPEC.space_id, ["KB-77:0"])
         assert set(states) == {"KB-77:0"}
         assert catalog.embedding_state(self.SPEC.space_id, []) == {}
+
+    def test_invalidate_embeddings_removes_every_space_for_chunk(
+        self, catalog: SqliteDocumentCatalog
+    ) -> None:
+        chunk = CHUNKS[0]
+        for spec in (self.SPEC, self.OTHER_SPEC):
+            catalog.mark_embedded(chunk.chunk_id, spec, _required_hash(chunk))
+
+        catalog.invalidate_embeddings([chunk.chunk_id, chunk.chunk_id])
+
+        assert catalog.embedding_state(self.SPEC.space_id) == {}
+        assert catalog.embedding_state(self.OTHER_SPEC.space_id) == {}
 
 
 class TestDurableBudgetLedger:

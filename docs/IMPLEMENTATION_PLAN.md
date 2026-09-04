@@ -1,5 +1,11 @@
 # Vectorstore Implementation Plan
 
+> Historical note: this document describes the original dense-only v0.1
+> implementation. The package now also includes catalogs, hybrid retrieval,
+> provider routing, and Markdown/CSV/JSON ingestion. See
+> [`retrieval_subsystem_architecture_b3bc2187.plan.md`](../retrieval_subsystem_architecture_b3bc2187.plan.md)
+> and the root README for the current architecture and commands.
+
 A comprehensive, extensible vectorstore library for semantic search over pre-chunked data. First-class backends: **NumPy** (in-memory + file persistence), **FAISS** (in-memory + native index persistence), **Chroma** (persistent local DB), and **Azure SQL** (managed relational persistence with native vectors). Embeddings via **OpenAI**. Designed so new stores/embedders plug in behind small ABCs.
 
 ## Context and constraints

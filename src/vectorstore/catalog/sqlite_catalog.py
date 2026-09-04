@@ -354,6 +354,64 @@ class SqliteDocumentCatalog:
                 rows,
             )
 
+    def replace_chunks(self, doc_id: str, chunks: list[CatalogChunk]) -> list[str]:
+        """Replace one document's chunks without discarding current ledgers."""
+        if not isinstance(doc_id, str) or not doc_id:
+            raise ValueError("doc_id must be a non-empty string")
+        if any(chunk.doc_id != doc_id for chunk in chunks):
+            raise ValueError("every replacement chunk must belong to doc_id")
+        new_ids = {chunk.chunk_id for chunk in chunks}
+        if len(new_ids) != len(chunks):
+            raise ValueError("replacement chunk IDs must be unique")
+        rows = [
+            (
+                chunk.chunk_id,
+                chunk.doc_id,
+                chunk.chunk_index,
+                chunk.section_path,
+                chunk.text,
+                chunk.content_hash,
+                int(chunk.active),
+            )
+            for chunk in chunks
+        ]
+        with self._connection:
+            old_ids = {
+                str(row["chunk_id"])
+                for row in self._connection.execute(
+                    "SELECT chunk_id FROM chunks WHERE doc_id = ?", (doc_id,)
+                ).fetchall()
+            }
+            if rows:
+                self._connection.executemany(
+                    """
+                    INSERT INTO chunks (
+                        chunk_id, doc_id, chunk_index, section_path,
+                        text, content_hash, active
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (chunk_id) DO UPDATE SET
+                        doc_id = excluded.doc_id,
+                        chunk_index = excluded.chunk_index,
+                        section_path = excluded.section_path,
+                        text = excluded.text,
+                        content_hash = excluded.content_hash,
+                        active = excluded.active
+                    """,
+                    rows,
+                )
+            removed = sorted(old_ids - new_ids)
+            if removed:
+                placeholders = ", ".join("?" for _ in removed)
+                self._connection.execute(
+                    f"DELETE FROM chunk_embeddings WHERE chunk_id IN ({placeholders})",
+                    removed,
+                )
+                self._connection.execute(
+                    f"DELETE FROM chunks WHERE chunk_id IN ({placeholders})",
+                    removed,
+                )
+        return removed
+
     def delete_documents(self, doc_ids: list[str]) -> None:
         """Delete documents and all associated chunk and ledger rows."""
         if not doc_ids:
@@ -518,6 +576,18 @@ class SqliteDocumentCatalog:
                     content_hash,
                     self._now().isoformat(),
                 ),
+            )
+
+    def invalidate_embeddings(self, chunk_ids: list[str]) -> None:
+        """Remove lifecycle state after authorization/filter metadata changes."""
+        unique_ids = list(dict.fromkeys(chunk_ids))
+        if not unique_ids:
+            return
+        placeholders = ", ".join("?" for _ in unique_ids)
+        with self._connection:
+            self._connection.execute(
+                f"DELETE FROM chunk_embeddings WHERE chunk_id IN ({placeholders})",
+                unique_ids,
             )
 
     def stale_chunk_ids(self, spec: EmbeddingSpec) -> list[str]:

@@ -224,6 +224,52 @@ def test_document_and_chunk_upserts_are_transactional() -> None:
     assert all(connection.commits == 1 for connection in database.connections)
 
 
+def test_replace_chunks_preserves_stable_ids_and_deletes_superseded_ids() -> None:
+    database = FakeDatabase(
+        [("INC-1104:old",), ("INC-1104:keep",)],
+        [],
+        [],
+    )
+    catalog = _catalog(database)
+    chunks = [
+        CatalogChunk(
+            chunk_id="INC-1104:keep",
+            doc_id="INC-1104",
+            text="Current procedure",
+        ),
+        CatalogChunk(
+            chunk_id="INC-1104:new",
+            doc_id="INC-1104",
+            text="New procedure",
+        ),
+    ]
+
+    removed = catalog.replace_chunks("INC-1104", chunks)
+
+    assert removed == ["INC-1104:old"]
+    assert database.executions[0][0] == "execute"
+    assert "SELECT chunk_id" in database.executions[0][1]
+    assert database.executions[1][0] == "executemany"
+    assert "ON CONFLICT (chunk_id) DO UPDATE" in database.executions[1][1]
+    assert "DELETE FROM" in database.executions[2][1]
+    assert database.executions[2][2] == ("INC-1104:old",)
+    assert database.connections[0].commits == 1
+
+
+def test_invalidate_embeddings_deletes_all_spaces_for_unique_chunk_ids() -> None:
+    database = FakeDatabase([])
+    catalog = _catalog(database)
+
+    catalog.invalidate_embeddings(["chunk-2", "chunk-1", "chunk-2"])
+
+    operation, statement, parameters = database.executions[0]
+    assert operation == "execute"
+    assert "DELETE FROM" in statement
+    assert "chunk_embeddings" in statement
+    assert parameters == ("chunk-2", "chunk-1")
+    assert database.connections[0].commits == 1
+
+
 def test_find_pushes_scope_and_typed_json_filters_into_postgresql() -> None:
     database = FakeDatabase(
         [

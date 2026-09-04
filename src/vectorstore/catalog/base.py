@@ -264,6 +264,14 @@ class DocumentCatalog(RetrievalCatalog, Protocol):
     def upsert_chunks(self, chunks: list[CatalogChunk]) -> None:
         """Insert or update chunks while keeping the lexical index in sync."""
 
+    def replace_chunks(self, doc_id: str, chunks: list[CatalogChunk]) -> list[str]:
+        """Replace one document's chunk set and return removed chunk IDs.
+
+        Unchanged chunk IDs retain their embedding-ledger rows, which lets an
+        ingestion pipeline skip current vectors. Rows no longer emitted by a
+        chunker are deleted with their lifecycle state.
+        """
+
     def delete_documents(self, doc_ids: list[str]) -> None:
         """Remove documents with their chunks, index entries, and ledger rows."""
 
@@ -278,6 +286,9 @@ class DocumentCatalog(RetrievalCatalog, Protocol):
         self, chunk_id: str, spec: EmbeddingSpec, content_hash: str
     ) -> None:
         """Record that a vector for this chunk exists in ``spec``'s space."""
+
+    def invalidate_embeddings(self, chunk_ids: list[str]) -> None:
+        """Remove all lifecycle rows for chunks whose dense metadata changed."""
 
     def stale_chunk_ids(self, spec: EmbeddingSpec) -> list[str]:
         """Active chunks whose vector in ``spec``'s space is missing or stale."""

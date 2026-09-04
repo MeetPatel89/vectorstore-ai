@@ -107,3 +107,23 @@ The OpenAI option requires `OPENAI_API_KEY`. The local option requires the
 `local` extra and may download its model the first time it runs. Rankings can
 vary by provider, while query classification, scope enforcement, and trace
 fields remain the same.
+
+## Phase 5: lifecycle-aware ingestion
+
+Run the complete source-to-retrieval workflow offline:
+
+```bash
+uv run python examples/05_ingestion.py
+```
+
+The demo uses `MarkdownSourceAdapter` and `MarkdownSectionChunker` to ingest
+the full corpus through `IngestionPipeline`. The first pass writes both the
+primary and fallback embedding spaces; the second pass uses lifecycle hashes
+to skip every current vector. It then changes one catalog chunk, repairs only
+that stale vector, and searches the resulting catalog and dense index through
+the hybrid retriever.
+
+The top-level `uv run python main.py` command runs this same walkthrough. Both
+commands default to the offline hash provider; `--provider openai` and
+`--provider local` select the real providers under the same requirements as
+the earlier demos.

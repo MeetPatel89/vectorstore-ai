@@ -1,9 +1,9 @@
 # vectorstore-ai
 
-An extensible Python library for structured, dense, lexical, and hybrid
-retrieval over pre-chunked text, with deterministic fusion and embedding
-provider fallback. It separates embedding from storage and ships with four
-cosine-similarity backends:
+An extensible Python library for ingesting and retrieving structured, dense,
+lexical, and hybrid content, with deterministic fusion and embedding-provider
+fallback. It separates source adaptation, chunking, embedding, and storage and
+ships with four cosine-similarity backends:
 
 - `NumpyVectorStore`: exact in-memory search with file persistence.
 - `FaissVectorStore`: exact FAISS search with file persistence.
@@ -20,10 +20,11 @@ one space and rejects stores with an incompatible dimension, so vectors from
 different embedding models are never compared against one another. Use one
 store (collection, table, or directory) per `spec.space_id`.
 
-For ingestion, `Record` separates a source row's semantic fields from its
-structured attributes; `semantic_projection()` renders only the semantic
-fields into indexable text, and `content_hash()` supports skipping
-re-embedding of unchanged content.
+For ingestion, adapters turn Markdown, CSV, and JSON sources into `Record`s.
+`Record` separates semantic fields from structured attributes;
+`semantic_projection()` renders only semantic fields into indexable text, and
+the lifecycle-aware `IngestionPipeline` skips unchanged vectors by content
+hash.
 
 `Record`, `Chunk`, and `CatalogDocument` defensively snapshot their input
 mappings and expose them read-only. Stored filtering behavior therefore cannot
@@ -33,9 +34,10 @@ change because a caller later mutates an input dictionary.
 
 The package is pre-1.0 (`0.1.0`). Structured retrieval, SQLite and PostgreSQL
 full-text catalogs, four dense stores, embedding-provider routing and budgets,
-hybrid RRF retrieval, and dependency-free retrieval observation are
-implemented. Source adapters, ingestion orchestration, OpenTelemetry export,
-and an Azure SQL full-text catalog remain roadmap work.
+hybrid RRF retrieval, Markdown/CSV/JSON ingestion, section and generic
+chunking, embedding lifecycle repair, and dependency-free retrieval
+observation are implemented. OpenTelemetry export and an Azure SQL full-text
+catalog remain roadmap work.
 
 ## Install
 
@@ -146,6 +148,89 @@ Schema creation is deliberately separate from runtime access. See
 [Azure SQL setup](docs/AZURE_SQL.md) for table bootstrap, managed identity,
 least-privilege grants, firewall/private endpoint configuration, and production
 connection strings.
+
+## Ingestion
+
+`MarkdownSourceAdapter`, `CsvSourceAdapter`, and `JsonSourceAdapter` normalize
+files into `Record` objects. Markdown accepts one file or recursively scans a
+directory; CSV is row-per-record; JSON accepts an object, an array, a
+`{"records": [...]}` wrapper, JSON Lines, or NDJSON. Directory traversal is
+stable and recursive for every adapter.
+
+CSV and JSON adapters infer common ID and semantic field names
+case-insensitively. For an application-specific schema, make the boundary
+explicit; a semantic mapping is `output label -> source field`:
+
+```python
+from vectorstore import CsvSourceAdapter, JsonSourceAdapter
+
+faqs = CsvSourceAdapter(
+    id_field="ID",
+    semantic_fields={"Question": "question", "Answer": "answer"},
+    structured_fields=("category", "status"),
+)
+events = JsonSourceAdapter(
+    id_field="event_id",
+    semantic_fields=("title", "description", "resolution"),
+)
+```
+
+`WholeRecordChunker` keeps each projection intact. `WordChunker` splits generic
+text into paragraph-aware overlapping windows. `MarkdownSectionChunker` first
+splits on H1/H2 boundaries, keeps deeper headings with their parent section,
+then applies the same size/overlap limit while repeating title and section
+context.
+
+The pipeline owns catalog writes, per-space dense writes, and lifecycle state:
+
+```python
+from vectorstore import (
+    EmbeddingRouter,
+    IngestionPipeline,
+    MarkdownSectionChunker,
+    MarkdownSourceAdapter,
+    NumpyVectorStore,
+    OpenAIEmbedding,
+    SentenceTransformerEmbedding,
+    SqliteDocumentCatalog,
+)
+
+catalog = SqliteDocumentCatalog("corpus.db")
+primary = OpenAIEmbedding()
+fallback = SentenceTransformerEmbedding()
+primary_store = NumpyVectorStore(dimension=primary.dimension)
+fallback_store = NumpyVectorStore(dimension=fallback.dimension)
+router = EmbeddingRouter(primary, fallback, ledger=catalog)
+
+pipeline = IngestionPipeline(
+    catalog,
+    {
+        primary.spec.space_id: primary_store,
+        fallback.spec.space_id: fallback_store,
+    },
+    router,
+    chunker=MarkdownSectionChunker(),
+)
+result = pipeline.ingest_source(MarkdownSourceAdapter(), "docs/")
+print(result.document_count, result.chunk_count, result.embedded_by_space)
+```
+
+The default `IngestionConfig` uses batches of 100, requires the primary
+provider, and eagerly builds the fallback space. `fallback_index="lazy"`
+builds that space only after policy actually routes ingestion there (or when
+`reembed_stale(fallback.spec)` is called); `"off"` never writes it. Set
+`ingest_requires_primary=False` only when a policy-routed fallback-only ingest
+is acceptable.
+
+On repeated ingestion, a `(chunk, space)` whose ledger hash still matches is
+not embedded again. Changed or missing vectors can be repaired with
+`pipeline.reembed_stale(spec)`. Replacing a document also removes chunks no
+longer emitted by the chunker from the catalog, lexical index, lifecycle
+ledger, and configured vector stores. Catalog rows are written before vector
+calls, so a provider or store failure remains visible as stale lifecycle state
+and is safe to retry. A structured-metadata change invalidates and rebuilds the
+affected dense entries even when text is unchanged, keeping tenant,
+visibility, and filter metadata synchronized with the catalog.
 
 ## Embedding providers and fallback policy
 
@@ -278,6 +363,9 @@ dense vectors themselves, which stay in per-space vector stores:
   records which vector exists per (chunk, embedding space);
   `stale_chunk_ids(spec)` returns chunks whose vector is missing or was
   built from outdated content, so re-embedding is incremental.
+- **Document-level replacement**: `replace_chunks(doc_id, chunks)` retains
+  ledger rows for stable chunk IDs and returns superseded IDs for pruning from
+  dense stores.
 - **Durable budget ledger**: the catalog satisfies the `BudgetLedger`
   protocol, so it can atomically reserve and reconcile spend across processes.
   Exact nanodollar accounting and complete pricing provenance survive restarts.
@@ -434,20 +522,23 @@ retrieval.
 
 ## Tests
 
-The full suite uses deterministic local embeddings and makes no API calls:
+The default offline suite uses deterministic local embeddings and makes no API
+calls:
 
 ```bash
-uv run pytest
+uv run pytest -m "not local_model"
 ```
 
 Tests marked `local_model` load the real MiniLM model; they skip
-automatically unless the `local` extra is installed.
+automatically unless the `local` extra is installed. With that extra and the
+model available locally (or with network access for its first download), run
+the complete suite with `uv run pytest`.
 
 ## Demo
 
 For offline-first, progressive walkthroughs of semantic projection, dense
-search, embedding-space safety, provider fallback policy, and the document
-catalog through end-to-end hybrid retrieval, see the
+search, embedding-space safety, provider fallback policy, the document
+catalog, hybrid retrieval, and lifecycle-aware ingestion, see the
 [retrieval demos](examples/README.md):
 
 ```bash
@@ -455,36 +546,25 @@ uv run python examples/01_dense_search.py
 uv run python examples/02_provider_routing.py
 uv run python examples/03_document_catalog.py
 uv run python examples/04_hybrid_retrieval.py
+uv run python examples/05_ingestion.py
 ```
 
-The original backend-selection demo below uses OpenAI embeddings.
-
-The demo treats each Markdown file under `data/corpora/nautilus/raw/` as one
-chunk, indexes the corpus, and runs sample searches:
+The top-level entrypoint runs the same Phase 5 demo. It adapts and
+section-chunks the bundled Markdown corpus, eagerly builds separate primary
+and fallback NumPy indexes, proves a second pass performs no vector writes,
+repairs one simulated stale chunk, and runs hybrid searches:
 
 ```bash
 uv run python main.py
 ```
 
-Chroma is the default (requires the `chroma` extra). To use the in-memory
-NumPy backend instead:
+It defaults to the deterministic hash provider and is fully offline. Opt into
+a real provider with:
 
 ```bash
-uv run python main.py --store numpy
+uv run python main.py --provider openai
+uv run python main.py --provider local
 ```
 
-Or run the same demo with FAISS:
-
-```bash
-uv run python main.py --store faiss
-```
-
-Once the Azure SQL table and connection environment variable are configured:
-
-```bash
-uv run python main.py --store azure-sql
-```
-
-`VECTORSTORE_BACKEND` and `VECTORSTORE_PATH` can also set the backend and Chroma
-directory. `AZURE_SQL_CONNECTIONSTRING` configures the Azure SQL backend. The
-demo requires `OPENAI_API_KEY`; the library's offline tests do not.
+The OpenAI option requires `OPENAI_API_KEY`; the local option requires the
+`local` extra and may download its model the first time it runs.

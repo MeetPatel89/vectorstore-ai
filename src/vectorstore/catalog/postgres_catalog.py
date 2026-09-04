@@ -402,6 +402,57 @@ ON CONFLICT (chunk_id) DO UPDATE SET
         with self._database.cursor(write=True) as cursor:
             cursor.executemany(statement, rows)
 
+    def replace_chunks(self, doc_id: str, chunks: list[CatalogChunk]) -> list[str]:
+        """Replace one document's chunks in one PostgreSQL transaction."""
+        if not isinstance(doc_id, str) or not doc_id:
+            raise ValueError("doc_id must be a non-empty string")
+        if any(chunk.doc_id != doc_id for chunk in chunks):
+            raise ValueError("every replacement chunk must belong to doc_id")
+        new_ids = {chunk.chunk_id for chunk in chunks}
+        if len(new_ids) != len(chunks):
+            raise ValueError("replacement chunk IDs must be unique")
+
+        rows = [
+            (
+                chunk.chunk_id,
+                chunk.doc_id,
+                chunk.chunk_index,
+                chunk.section_path,
+                chunk.text,
+                chunk.content_hash,
+                chunk.active,
+            )
+            for chunk in chunks
+        ]
+        upsert = f"""
+INSERT INTO {self._chunks} (
+    chunk_id, doc_id, chunk_index, section_path, text, content_hash, active
+) VALUES (%s, %s, %s, %s, %s, %s, %s)
+ON CONFLICT (chunk_id) DO UPDATE SET
+    doc_id = EXCLUDED.doc_id,
+    chunk_index = EXCLUDED.chunk_index,
+    section_path = EXCLUDED.section_path,
+    text = EXCLUDED.text,
+    content_hash = EXCLUDED.content_hash,
+    active = EXCLUDED.active
+""".strip()
+        with self._database.cursor(write=True) as cursor:
+            cursor.execute(
+                f"SELECT chunk_id FROM {self._chunks} WHERE doc_id = %s",
+                (doc_id,),
+            )
+            old_ids = {str(_row_value(row, 0, "chunk_id")) for row in cursor.fetchall()}
+            if rows:
+                cursor.executemany(upsert, rows)
+            removed = sorted(old_ids - new_ids)
+            if removed:
+                cursor.execute(
+                    f"DELETE FROM {self._chunks} "
+                    f"WHERE chunk_id IN ({_placeholders(len(removed))})",
+                    tuple(removed),
+                )
+        return removed
+
     def delete_documents(self, doc_ids: list[str]) -> None:
         """Delete documents; foreign keys cascade chunks and ledger state."""
         unique_ids = list(dict.fromkeys(doc_ids))
@@ -570,6 +621,18 @@ ON CONFLICT (chunk_id, space_id) DO UPDATE SET
                     content_hash,
                     self._now(),
                 ),
+            )
+
+    def invalidate_embeddings(self, chunk_ids: list[str]) -> None:
+        """Remove lifecycle state after authorization/filter metadata changes."""
+        unique_ids = list(dict.fromkeys(chunk_ids))
+        if not unique_ids:
+            return
+        with self._database.cursor(write=True) as cursor:
+            cursor.execute(
+                f"DELETE FROM {self._chunk_embeddings} "
+                f"WHERE chunk_id IN ({_placeholders(len(unique_ids))})",
+                tuple(unique_ids),
             )
 
     def stale_chunk_ids(self, spec: EmbeddingSpec) -> list[str]:
