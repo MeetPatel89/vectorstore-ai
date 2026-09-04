@@ -4,7 +4,7 @@ from typing import cast
 
 import pytest
 
-from vectorstore import Record, content_hash, semantic_projection
+from vectorstore import Chunk, MetadataValue, Record, content_hash, semantic_projection
 
 
 def make_record(
@@ -78,3 +78,21 @@ def test_content_hash_is_stable_and_content_sensitive() -> None:
     assert content_hash(text) != content_hash(text + " updated")
     with pytest.raises(ValueError, match="must be a string"):
         content_hash(cast(str, None))
+
+
+def test_record_and_chunk_snapshot_mutable_input_mappings() -> None:
+    semantic_fields = {"Title": "Original"}
+    structured: dict[str, MetadataValue] = {"status": "OPEN"}
+    metadata: dict[str, MetadataValue] = {"kind": "runbook"}
+
+    record = Record("doc", semantic_fields, structured)
+    chunk = Chunk("chunk", "Text", metadata)
+    semantic_fields["Title"] = "Changed"
+    structured["status"] = "CLOSED"
+    metadata["kind"] = "policy"
+
+    assert record.semantic_fields == {"Title": "Original"}
+    assert record.structured == {"status": "OPEN"}
+    assert chunk.metadata == {"kind": "runbook"}
+    with pytest.raises(TypeError):
+        cast(dict[str, MetadataValue], chunk.metadata)["kind"] = "policy"

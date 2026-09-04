@@ -178,7 +178,7 @@ class FaissVectorStore(VectorStore):
                 "faiss_id": self._id_to_faiss_id[id_],
                 "id": chunk.id,
                 "text": chunk.text,
-                "metadata": chunk.metadata,
+                "metadata": dict(chunk.metadata),
             }
             for id_, chunk in self._chunks.items()
         ]

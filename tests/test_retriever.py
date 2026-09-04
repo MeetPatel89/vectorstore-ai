@@ -26,6 +26,8 @@ from vectorstore import (
     LexicalUnavailableError,
     NumpyVectorStore,
     QueryKind,
+    RankedHit,
+    RetrievalCatalog,
     RetrievalResult,
     RetrievalScope,
     RetrievalTraceObserver,
@@ -38,6 +40,30 @@ from vectorstore import (
 )
 from vectorstore.hybrid.retriever import merge_scope_filter
 from vectorstore.models import MetadataFilter, MetadataValue
+
+
+class ReadOnlyCatalog:
+    """Minimal retrieval adapter with no mutation or budget responsibilities."""
+
+    def find(
+        self,
+        filter: MetadataFilter | None = None,
+        scope: RetrievalScope | None = None,
+        limit: int = 100,
+    ) -> list[CatalogDocument]:
+        return []
+
+    def get_chunks(self, chunk_ids: list[str]) -> list[CatalogChunk]:
+        return []
+
+    def search_lexical(
+        self,
+        query: str,
+        k: int = 10,
+        filter: MetadataFilter | None = None,
+        scope: RetrievalScope | None = None,
+    ) -> list[RankedHit]:
+        return []
 
 
 class FailingEmbedding(FakeEmbedding):
@@ -183,6 +209,19 @@ def make_retriever(
         observer=observer,
         config=config,
     )
+
+
+def test_retriever_depends_only_on_read_catalog_boundary() -> None:
+    catalog = ReadOnlyCatalog()
+
+    assert isinstance(catalog, RetrievalCatalog)
+    retriever = Retriever(
+        catalog,
+        config=RetrieverConfig(dense_enabled=False),
+    )
+
+    assert retriever.find() == []
+    assert retriever.retrieve("nothing indexed").hits == ()
 
 
 class TestHybridRetrieve:

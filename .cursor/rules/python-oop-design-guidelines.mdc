@@ -1,0 +1,119 @@
+---
+alwaysApply: true
+---
+# Python Object-Oriented Design Rules
+
+Apply these rules whenever creating or modifying Python code.
+
+## Proportionality
+
+Apply these principles proportionally. Do not introduce patterns, interfaces,
+classes, repositories, factories, or dependency-injection machinery unless the
+current change has a concrete need for them.
+
+Prefer the simplest design that preserves clear responsibilities, encapsulation,
+testability, and dependency boundaries.
+
+## Preserve architecture before optimizing locally
+
+Before changing code:
+
+1. Identify the responsibility of each affected module and class.
+2. Follow existing architectural boundaries unless they are clearly defective.
+3. Do not place behavior in the nearest convenient file merely to minimize the patch.
+4. Consider the effect of the change on future extension, testing, coupling, and dependency direction.
+
+## Class responsibilities
+
+* Each class must have one clear responsibility and one primary reason to change.
+* Do not create “Manager,” “Helper,” “Utils,” or “Service” classes that collect unrelated behavior.
+* Keep orchestration separate from domain logic.
+* Keep persistence, networking, framework integration, and user-interface concerns outside domain entities.
+* Avoid classes that merely wrap one stateless function without providing meaningful abstraction, state, lifecycle, or polymorphism.
+
+## Encapsulation
+
+* Keep implementation details private.
+* Expose behavior-oriented methods rather than allowing callers to manipulate internal state directly.
+* Do not return mutable internal collections unless mutation by the caller is intentional.
+* Maintain class invariants inside constructors and methods.
+* Prefer immutable value objects where practical.
+
+## Dependencies
+
+* Depend on abstractions at architectural boundaries.
+* Inject external dependencies such as repositories, clients, clocks, file systems, and message publishers.
+* Do not instantiate infrastructure dependencies deep inside domain or application logic.
+* Make dependencies explicit through constructors or method parameters.
+* Avoid service locators and hidden global state.
+
+## Composition and inheritance
+
+* Prefer composition over inheritance.
+* Use inheritance only when there is a genuine substitutable “is-a” relationship.
+* Do not inherit merely to reuse implementation.
+* Keep inheritance hierarchies shallow.
+* Use protocols or abstract base classes only when multiple implementations, substitution, or boundary isolation justify them.
+
+## Interfaces
+
+* Keep interfaces small and focused.
+* Do not force consumers to depend on methods they do not use.
+* Introduce an abstraction only when it represents a meaningful boundary or variation point.
+* Avoid speculative interfaces created solely for hypothetical future requirements.
+
+## Domain modeling
+
+* Put business rules close to the domain concepts that own them.
+* Avoid anemic domain objects that expose data while external services contain all behavior.
+* Use value objects for concepts with validation, equality semantics, or domain-specific operations.
+* Make invalid states difficult or impossible to represent.
+
+## Mutation and state
+
+* Minimize mutable shared state.
+* Make state transitions explicit.
+* Do not allow arbitrary attribute mutation when validation or invariants are required.
+* Avoid temporal coupling where methods must be called in an undocumented order.
+* Prefer returning new values over mutating distant objects as a side effect.
+
+## Error handling
+
+* Raise domain-specific exceptions at meaningful abstraction boundaries.
+* Do not expose low-level infrastructure exceptions directly to higher layers.
+* Do not use exceptions for ordinary control flow.
+* Preserve exception context when translating errors.
+
+## Testability
+
+* Design classes so their behavior can be tested without real databases, networks, clocks, or file systems.
+* Test observable behavior rather than private implementation details.
+* Do not modify visibility solely to make internals testable.
+* Avoid excessive mocking caused by classes having too many responsibilities or dependencies.
+
+## Refactoring existing code
+
+When a requested change exposes an existing design problem:
+
+* Do not silently expand the problem.
+* Make the smallest coherent refactor that preserves or improves architectural boundaries.
+* Mention significant design tradeoffs in the response.
+* Do not perform broad unrelated rewrites.
+* Preserve public behavior unless a behavior change is explicitly requested.
+
+## Before finalizing
+
+Review the implementation for:
+
+* single responsibility;
+* correct dependency direction;
+* encapsulation;
+* cohesion and coupling;
+* appropriate use of composition;
+* explicit dependencies;
+* class invariants;
+* unnecessary abstraction;
+* testability;
+* consistency with the existing architecture.
+
+Do not claim the design follows these rules unless the final code has been checked against them.

@@ -1,7 +1,7 @@
 [project]
 name = "vectorstore-ai"
 version = "0.1.0"
-description = "An extensible vector store library for semantic search"
+description = "Extensible structured, dense, lexical, and hybrid retrieval"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -24,6 +24,9 @@ azure-sql = [
 local = [
     "sentence-transformers>=5.0",
     "torch>=2.9",
+]
+postgres = [
+    "psycopg[binary]>=3.2",
 ]
 
 [dependency-groups]

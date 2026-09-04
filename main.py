@@ -10,11 +10,9 @@ from pathlib import Path
 from vectorstore import (
     Chunk,
     OpenAIEmbedding,
-    SentenceTransformerEmbedding,
     VectorIndex,
     create_store,
 )
-from vectorstore.embeddings import estimate_tokens
 
 CORPUS_ROOT = Path(__file__).parent / "data" / "corpora" / "nautilus" / "raw"
 SAMPLE_QUERIES: tuple[tuple[str, dict[str, object] | None], ...] = (
@@ -103,35 +101,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    # raise SystemExit(main())
-
-    from dotenv import load_dotenv
-
-    load_dotenv()
-    texts = ["Hello, world!", "Nautilus Shell", "Fibonacci Spiral", "INC-1104"]
-    embedding = SentenceTransformerEmbedding()
-    embeddings = embedding.embed_texts(texts)
-    print("------------SentenceTransformer Embedding--------------------")
-    print(embedding.spec)
-    print(embedding.spec.space_id)
-    print(embedding.spec.dimension)
-    print(len(embeddings[0]))
-    print("--------------------------------")
-    for i, embedding_vector in enumerate(embeddings):
-        print(
-            f"Estimated tokens for text {texts[i]}: "
-            f"{embedding.estimate_tokens([texts[i]])}"
-        )
-        print("--------------------------------")
-
-    embedding = OpenAIEmbedding()
-    embeddings = embedding.embed_texts(texts)
-    print("------------OpenAI Embedding--------------------")
-    print(embedding.spec)
-    print(embedding.spec.space_id)
-    print(embedding.spec.dimension)
-    print(len(embeddings[0]))
-    print("--------------------------------")
-    for i, embedding_vector in enumerate(embeddings):
-        print(f"Estimated tokens for text {texts[i]}: {estimate_tokens([texts[i]])}")
-        print("--------------------------------")
+    raise SystemExit(main())

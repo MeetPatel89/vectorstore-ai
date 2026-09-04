@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from math import ceil
 
@@ -83,21 +84,34 @@ class EmbeddingUsage:
         return self.total_tokens
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class EmbeddingResult:
     """Embedding vectors plus authoritative usage when a provider reports it."""
 
-    vectors: list[list[float]]
+    _vectors: tuple[tuple[float, ...], ...]
     usage: EmbeddingUsage | None = None
+
+    def __init__(
+        self,
+        vectors: Sequence[Sequence[float]],
+        usage: EmbeddingUsage | None = None,
+    ) -> None:
+        object.__setattr__(self, "_vectors", tuple(tuple(vector) for vector in vectors))
+        object.__setattr__(self, "usage", usage)
+
+    @property
+    def vectors(self) -> list[list[float]]:
+        """Defensive copies of all vectors in their original order."""
+        return [list(vector) for vector in self._vectors]
 
     @property
     def vector(self) -> list[float]:
         """The sole vector from a query embedding result."""
-        if len(self.vectors) != 1:
+        if len(self._vectors) != 1:
             raise ValueError(
-                f"expected exactly one embedding vector, got {len(self.vectors)}"
+                f"expected exactly one embedding vector, got {len(self._vectors)}"
             )
-        return self.vectors[0]
+        return list(self._vectors[0])
 
 
 class EmbeddingProvider(ABC):

@@ -10,7 +10,7 @@ with fail-fast validation.
 
 from __future__ import annotations
 
-from vectorstore.catalog.base import DocumentCatalog
+from vectorstore.catalog.base import RetrievalCatalog
 from vectorstore.embeddings.base import EmbeddingProvider
 from vectorstore.embeddings.policy import BudgetLedger, CircuitBreaker, EmbeddingRouter
 from vectorstore.embeddings.pricing import EmbeddingPricing, UsdAmount
@@ -30,7 +30,7 @@ def _validate_store(provider: EmbeddingProvider, store: VectorStore, role: str) 
 
 
 def build_retriever(
-    catalog: DocumentCatalog,
+    catalog: RetrievalCatalog,
     *,
     primary: EmbeddingProvider | None = None,
     primary_store: VectorStore | None = None,

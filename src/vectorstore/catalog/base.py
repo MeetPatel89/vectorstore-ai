@@ -1,12 +1,17 @@
-"""Document catalog contract: structured find, lexical search, and ledgers.
+"""Document catalog contracts for structured, lexical, and lifecycle data.
 
 A :class:`DocumentCatalog` is the system of record for searchable documents.
 It owns three of the four retrieval concerns:
 
 - structured source data (documents and chunks with filterable attributes),
-- the lexical/full-text index (database-native, e.g. SQLite FTS5),
-- the embedding lifecycle ledger (which vector was built from which content)
-  and the budget ledger (durable spend aggregates).
+- the lexical/full-text index (database-native, e.g. SQLite FTS5 or
+  PostgreSQL tsvector/GIN),
+- the embedding lifecycle ledger (which vector was built from which content).
+
+Budget accounting is a separate application boundary represented by
+:class:`~vectorstore.embeddings.policy.BudgetLedger`. The bundled SQL catalog
+facades also satisfy that protocol for backward compatibility and convenient
+transactional persistence, but retrieval-only consumers do not depend on it.
 
 Dense vectors themselves live in per-space
 :class:`~vectorstore.stores.base.VectorStore` instances, never in the
@@ -18,17 +23,13 @@ same storage.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from decimal import Decimal
+from math import isfinite
 from typing import Protocol, runtime_checkable
 
 from vectorstore.embeddings.base import EmbeddingSpec
-from vectorstore.embeddings.policy import (
-    BudgetReservation,
-    BudgetReservationDecision,
-)
-from vectorstore.embeddings.pricing import EmbeddingCharge, UsdAmount
-from vectorstore.models import MetadataFilter, MetadataValue
+from vectorstore.models import MetadataFilter, MetadataValue, _freeze_metadata
 from vectorstore.records import content_hash as _content_hash
 
 
@@ -92,13 +93,30 @@ class CatalogDocument:
     status: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
-    attributes: dict[str, MetadataValue] = field(default_factory=dict)
+    attributes: Mapping[str, MetadataValue] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.doc_id, str) or not self.doc_id:
             raise ValueError("doc_id must be a non-empty string")
-        if not isinstance(self.attributes, dict):
-            raise ValueError("attributes must be a dictionary")
+        for label in (
+            "title",
+            "source",
+            "doc_type",
+            "tenant_id",
+            "visibility",
+            "owner_group",
+            "status",
+            "created_at",
+            "updated_at",
+        ):
+            value = getattr(self, label)
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"{label} must be a string or None")
+        object.__setattr__(
+            self,
+            "attributes",
+            _freeze_metadata(self.attributes, label="document attributes"),
+        )
 
 
 @dataclass(frozen=True)
@@ -125,6 +143,20 @@ class CatalogChunk:
             raise ValueError("doc_id must be a non-empty string")
         if not isinstance(self.text, str) or not self.text.strip():
             raise ValueError("chunk text must be a non-empty string")
+        if (
+            not isinstance(self.chunk_index, int)
+            or isinstance(self.chunk_index, bool)
+            or self.chunk_index < 0
+        ):
+            raise ValueError("chunk_index must be a non-negative integer")
+        if self.section_path is not None and not isinstance(self.section_path, str):
+            raise ValueError("section_path must be a string or None")
+        if self.content_hash is not None and (
+            not isinstance(self.content_hash, str) or not self.content_hash
+        ):
+            raise ValueError("content_hash must be a non-empty string or None")
+        if not isinstance(self.active, bool):
+            raise ValueError("active must be a boolean")
         if self.content_hash is None:
             object.__setattr__(self, "content_hash", _content_hash(self.text))
 
@@ -142,6 +174,22 @@ class RankedHit:
     chunk_id: str
     rank: int
     score: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.chunk_id, str) or not self.chunk_id:
+            raise ValueError("chunk_id must be a non-empty string")
+        if (
+            not isinstance(self.rank, int)
+            or isinstance(self.rank, bool)
+            or self.rank <= 0
+        ):
+            raise ValueError("rank must be a positive integer")
+        if (
+            not isinstance(self.score, (int, float))
+            or isinstance(self.score, bool)
+            or not isfinite(self.score)
+        ):
+            raise ValueError("score must be finite")
 
 
 @dataclass(frozen=True)
@@ -165,26 +213,13 @@ class EmbeddingState:
 
 
 @runtime_checkable
-class DocumentCatalog(Protocol):
-    """Storage-backed catalog of documents, chunks, and retrieval ledgers.
+class RetrievalCatalog(Protocol):
+    """The read boundary required by hybrid retrieval.
 
-    Implementations (SQLite today, Azure SQL later) push scope and metadata
-    filters down into SQL. Every implementation also satisfies the
-    :class:`~vectorstore.embeddings.policy.BudgetLedger` protocol so the
-    :class:`~vectorstore.embeddings.policy.EmbeddingRouter` can use durable
-    spend aggregates.
+    Keeping this protocol smaller than :class:`DocumentCatalog` lets query
+    paths depend only on candidate generation and hydration, without also
+    acquiring document-mutation or embedding-lifecycle responsibilities.
     """
-
-    # -- structured documents and chunks ---------------------------------
-
-    def upsert_documents(self, documents: list[CatalogDocument]) -> None:
-        """Insert or update documents by ``doc_id``."""
-
-    def upsert_chunks(self, chunks: list[CatalogChunk]) -> None:
-        """Insert or update chunks while keeping the lexical index in sync."""
-
-    def delete_documents(self, doc_ids: list[str]) -> None:
-        """Remove documents with their chunks, index entries, and ledger rows."""
 
     def find(
         self,
@@ -197,8 +232,6 @@ class DocumentCatalog(Protocol):
     def get_chunks(self, chunk_ids: list[str]) -> list[CatalogChunk]:
         """Hydrate chunks by ID, preserving the requested order."""
 
-    # -- lexical retrieval -------------------------------------------------
-
     def search_lexical(
         self,
         query: str,
@@ -206,11 +239,33 @@ class DocumentCatalog(Protocol):
         filter: MetadataFilter | None = None,
         scope: RetrievalScope | None = None,
     ) -> list[RankedHit]:
-        """Full-text search over chunk text, filtered and scoped in SQL.
+        """Full-text search over chunk text, filtered and scoped in storage.
 
         Raises :class:`LexicalUnavailableError` when the full-text index
         cannot serve queries.
         """
+
+
+@runtime_checkable
+class DocumentCatalog(RetrievalCatalog, Protocol):
+    """Mutable document catalog with embedding-lifecycle state.
+
+    Implementations (SQLite and PostgreSQL today, Azure SQL later) push scope
+    and metadata filters down into SQL. The bundled implementations separately
+    satisfy :class:`~vectorstore.embeddings.policy.BudgetLedger`; budget methods
+    deliberately do not belong to this document-storage contract.
+    """
+
+    # -- structured documents and chunks ---------------------------------
+
+    def upsert_documents(self, documents: list[CatalogDocument]) -> None:
+        """Insert or update documents by ``doc_id``."""
+
+    def upsert_chunks(self, chunks: list[CatalogChunk]) -> None:
+        """Insert or update chunks while keeping the lexical index in sync."""
+
+    def delete_documents(self, doc_ids: list[str]) -> None:
+        """Remove documents with their chunks, index entries, and ledger rows."""
 
     # -- embedding lifecycle ledger ---------------------------------------
 
@@ -226,52 +281,3 @@ class DocumentCatalog(Protocol):
 
     def stale_chunk_ids(self, spec: EmbeddingSpec) -> list[str]:
         """Active chunks whose vector in ``spec``'s space is missing or stale."""
-
-    # -- budget ledger (BudgetLedger protocol) -----------------------------
-
-    def reserve(
-        self,
-        charge: EmbeddingCharge,
-        *,
-        daily_limit_nanos: int | None,
-        monthly_limit_nanos: int | None,
-        ttl_seconds: float,
-    ) -> BudgetReservationDecision:
-        """Atomically reserve predicted spend under the configured limits."""
-
-    def commit(
-        self,
-        reservation: BudgetReservation,
-        actual_charge: EmbeddingCharge,
-    ) -> None:
-        """Reconcile a reservation with authoritative token usage."""
-
-    def release(self, reservation: BudgetReservation) -> None:
-        """Release predicted spend after a skipped or failed call."""
-
-    def record(
-        self,
-        charge_or_provider: EmbeddingCharge | str,
-        tokens: int | None = None,
-        usd: UsdAmount | None = None,
-        *,
-        model: str = "<unspecified>",
-        processing_mode: str = "standard",
-        price_version: str = "legacy-explicit-total",
-    ) -> None:
-        """Record one committed embedding usage event."""
-
-    def spent_today_nanos(self) -> int:
-        """Return committed plus reserved nanodollars for the current UTC day."""
-
-    def spent_month_nanos(self) -> int:
-        """Return committed plus reserved nanodollars for the current UTC month."""
-
-    def spent_today(self) -> Decimal:
-        """Exact committed plus reserved USD spend for the current UTC day."""
-
-    def spent_month(self) -> Decimal:
-        """Exact committed plus reserved USD spend for the current UTC month."""
-
-    def tokens_today(self, provider: str, model: str | None = None) -> int:
-        """Return committed tokens today, optionally filtered by model."""

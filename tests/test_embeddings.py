@@ -8,8 +8,10 @@ import pytest
 
 import vectorstore.embeddings.openai as openai_provider
 from vectorstore import (
+    EmbeddingResult,
     EmbeddingRouter,
     OpenAIEmbedding,
+    SentenceTransformerEmbedding,
     TokenCountingUnavailableError,
 )
 
@@ -83,6 +85,55 @@ def test_openai_embedding_batches_and_restores_response_order(
         },
     ]
     assert embedder.dimension == 2
+
+
+def test_openai_embedding_accepts_an_injected_client_without_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    client = _FakeClient()
+    embedder = OpenAIEmbedding(client=client, dimensions=2)
+
+    assert embedder.embed_texts(["abc"]) == [[3.0, 0.0]]
+    assert client.embeddings.calls[0]["model"] == "text-embedding-3-small"
+
+
+def test_sentence_transformer_accepts_lazy_injected_model_factory() -> None:
+    factory_calls: list[tuple[str, str | None]] = []
+
+    class FakeModel:
+        def get_embedding_dimension(self) -> int:
+            return 2
+
+        def encode(self, texts: list[str], **kwargs: object) -> list[list[float]]:
+            assert kwargs["normalize_embeddings"] is True
+            return [[float(len(text)), 1.0] for text in texts]
+
+    def model_factory(model: str, device: str | None) -> FakeModel:
+        factory_calls.append((model, device))
+        return FakeModel()
+
+    embedder = SentenceTransformerEmbedding(
+        model="test-model",
+        dimension=2,
+        device="cpu",
+        model_factory=model_factory,
+    )
+
+    assert factory_calls == []
+    assert embedder.embed_texts(["abc"]) == [[3.0, 1.0]]
+    assert factory_calls == [("test-model", "cpu")]
+
+
+def test_embedding_result_does_not_expose_mutable_vector_state() -> None:
+    vectors = [[1.0, 2.0]]
+    result = EmbeddingResult(vectors)
+
+    vectors[0][0] = 99.0
+    returned = result.vectors
+    returned[0][1] = 88.0
+
+    assert result.vector == [1.0, 2.0]
 
 
 def test_legacy_embedding_method_still_returns_vectors(

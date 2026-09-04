@@ -32,13 +32,23 @@ class ChromaVectorStore(VectorStore):
                 "(chromadb>=1.5.5); install it with `uv sync --extra chroma`"
             ) from exc
 
-        self.path = str(path)
-        self.collection_name = collection_name
+        self._path = str(path)
+        self._collection_name = collection_name
         self._client = chromadb.PersistentClient(path=self.path)
         self._collection = self._client.get_or_create_collection(
             name=collection_name,
             metadata={"hnsw:space": "cosine"},
         )
+
+    @property
+    def path(self) -> str:
+        """The immutable persistence path configured for this store."""
+        return self._path
+
+    @property
+    def collection_name(self) -> str:
+        """The immutable Chroma collection name."""
+        return self._collection_name
 
     @override
     def upsert(self, chunks: list[Chunk], vectors: list[list[float]]) -> None:

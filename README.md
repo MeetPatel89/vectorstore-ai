@@ -1,7 +1,9 @@
 # vectorstore-ai
 
-An extensible Python library for semantic search over pre-chunked text. It
-separates embedding from storage and ships with four cosine-similarity backends:
+An extensible Python library for structured, dense, lexical, and hybrid
+retrieval over pre-chunked text, with deterministic fusion and embedding
+provider fallback. It separates embedding from storage and ships with four
+cosine-similarity backends:
 
 - `NumpyVectorStore`: exact in-memory search with file persistence.
 - `FaissVectorStore`: exact FAISS search with file persistence.
@@ -23,6 +25,128 @@ structured attributes; `semantic_projection()` renders only the semantic
 fields into indexable text, and `content_hash()` supports skipping
 re-embedding of unchanged content.
 
+`Record`, `Chunk`, and `CatalogDocument` defensively snapshot their input
+mappings and expose them read-only. Stored filtering behavior therefore cannot
+change because a caller later mutates an input dictionary.
+
+## Status
+
+The package is pre-1.0 (`0.1.0`). Structured retrieval, SQLite and PostgreSQL
+full-text catalogs, four dense stores, embedding-provider routing and budgets,
+hybrid RRF retrieval, and dependency-free retrieval observation are
+implemented. Source adapters, ingestion orchestration, OpenTelemetry export,
+and an Azure SQL full-text catalog remain roadmap work.
+
+## Install
+
+Python 3.14 and [uv](https://docs.astral.sh/uv/) are required. The core
+install ships the NumPy store and OpenAI embeddings:
+
+```bash
+uv sync
+```
+
+The other backends are optional extras:
+
+```bash
+uv sync --extra chroma      # ChromaVectorStore
+uv sync --extra faiss       # FaissVectorStore
+uv sync --extra azure-sql   # AzureSqlVectorStore (Microsoft's driver)
+uv sync --extra local       # SentenceTransformerEmbedding (torch + sentence-transformers)
+uv sync --extra postgres    # PostgresDocumentCatalog (Psycopg 3)
+```
+
+For OpenAI embeddings, export an API key:
+
+```bash
+export OPENAI_API_KEY="your-api-key"
+```
+
+## Quickstart
+
+```python
+from vectorstore import Chunk, OpenAIEmbedding, VectorIndex, create_store
+
+store = create_store("numpy")
+index = VectorIndex(OpenAIEmbedding(), store)
+
+index.index(
+    [
+        Chunk(
+            id="runbook-sso",
+            text="Troubleshoot login failures after signing certificate rotation.",
+            metadata={"doc_type": "runbook", "priority": 2},
+        ),
+        Chunk(
+            id="policy-change",
+            text="Production certificate changes require approval.",
+            metadata={"doc_type": "policy", "priority": 1},
+        ),
+    ]
+)
+
+results = index.search(
+    "users cannot log in after certificate rotation",
+    k=3,
+    filter={"doc_type": {"$in": ["runbook", "known_issue"]}},
+)
+for result in results:
+    print(result.score, result.chunk.id)
+```
+
+Filters support equality, `$in`, `$gt`, `$gte`, `$lt`, and `$lte`. Conditions
+on multiple metadata keys are ANDed together.
+
+To persist a NumPy store explicitly:
+
+```python
+from vectorstore import NumpyVectorStore
+
+store.save(".vectors")
+store = NumpyVectorStore.load(".vectors")
+```
+
+FAISS uses the same explicit persistence pattern and stores a native FAISS
+index alongside its chunk data and string-ID mapping:
+
+```python
+from vectorstore import FaissVectorStore
+
+store = create_store("faiss")
+# ...index chunks through VectorIndex...
+store.save(".faiss")
+store = FaissVectorStore.load(".faiss")
+```
+
+For automatic local persistence, create Chroma with a directory and collection:
+
+```python
+store = create_store(
+    "chroma",
+    path=".chroma",
+    collection_name="support-docs",
+)
+```
+
+For Azure SQL, use a passwordless Microsoft Entra connection string and the
+embedding dimension used by your provider:
+
+```bash
+export AZURE_SQL_CONNECTIONSTRING="Server=<server>.database.windows.net;Database=<database>;Authentication=ActiveDirectoryDefault;Encrypt=yes;TrustServerCertificate=no;"
+```
+
+```python
+from vectorstore import AzureSqlVectorStore
+
+store = AzureSqlVectorStore(dimension=1536)
+store.validate_schema()
+```
+
+Schema creation is deliberately separate from runtime access. See
+[Azure SQL setup](docs/AZURE_SQL.md) for table bootstrap, managed identity,
+least-privilege grants, firewall/private endpoint configuration, and production
+connection strings.
+
 ## Embedding providers and fallback policy
 
 Two providers ship with the library:
@@ -32,6 +156,12 @@ Two providers ship with the library:
 - `SentenceTransformerEmbedding` (fallback, extra `local`): a locally hosted
   Sentence Transformers model, default `all-MiniLM-L6-v2` (384 dimensions,
   L2-normalized). The model loads lazily on first use.
+
+Provider configuration is read-only after construction so an established
+`EmbeddingSpec` cannot drift. Applications and tests can inject an
+`OpenAIClient` through `OpenAIEmbedding(client=...)` or a
+`SentenceTransformerModelFactory` through `model_factory=...`; the default
+paths still construct the official SDK client and lazily load the local model.
 
 `EmbeddingRouter` deterministically picks one of them per call and returns a
 `ProviderSelection` with a machine-readable `SelectionReason`:
@@ -126,21 +256,24 @@ be reconciled separately against organization billing data.
 
 ## Document catalog (structured find, lexical search, ledgers)
 
-`SqliteDocumentCatalog` (standard library only, zero extra dependencies) is
-the system of record for searchable documents. It owns everything except the
+`SqliteDocumentCatalog` (standard library only) and
+`PostgresDocumentCatalog` (the optional `postgres` extra) are interchangeable
+systems of record for searchable documents. They own everything except the
 dense vectors themselves, which stay in per-space vector stores:
 
 - **Structured retrieval**: `find(filter, scope, limit)` queries documents by
   their natural attributes (`doc_type`, `status`, `tenant_id`, ...) plus any
   custom attributes, using the same filter syntax as vector search. Filters
-  are pushed down into SQL (`json_extract` for custom attributes).
-- **Lexical retrieval**: `search_lexical(query, k, filter, scope)` uses an
-  FTS5 index over chunk text with BM25 ranking, kept in sync with the chunk
-  rows by triggers in the same transaction. Raw user queries are sanitized
-  into safe MATCH expressions; quoted phrases become phrase queries. Exact
+  are pushed down into SQL (`json_extract` in SQLite and typed `JSONB`
+  predicates in PostgreSQL for custom attributes).
+- **Lexical retrieval**: `search_lexical(query, k, filter, scope)` uses either
+  SQLite FTS5 with BM25 ranking or a PostgreSQL stored `tsvector` with a GIN
+  inverted index and `ts_rank_cd` ranking. SQLite sanitizes queries into safe
+  MATCH expressions; PostgreSQL parameterizes raw input and converts it with
+  `websearch_to_tsquery`, which also preserves quoted-phrase semantics. Exact
   identifiers like `INC-1104` or `SQLSTATE 23505` are first-class here.
-  If FTS5 is unavailable, a typed `LexicalUnavailableError` lets callers
-  degrade to dense + structured retrieval.
+  A typed `LexicalUnavailableError` lets callers degrade to dense + structured
+  retrieval when the backend's lexical schema is unavailable.
 - **Embedding lifecycle ledger**: `mark_embedded(chunk_id, spec, hash)`
   records which vector exists per (chunk, embedding space);
   `stale_chunk_ids(spec)` returns chunks whose vector is missing or was
@@ -148,6 +281,13 @@ dense vectors themselves, which stay in per-space vector stores:
 - **Durable budget ledger**: the catalog satisfies the `BudgetLedger`
   protocol, so it can atomically reserve and reconcile spend across processes.
   Exact nanodollar accounting and complete pricing provenance survive restarts.
+
+The public boundaries stay focused: `Retriever` depends only on
+`RetrievalCatalog` (`find`, `search_lexical`, and `get_chunks`), while
+`DocumentCatalog` adds mutation and embedding-lifecycle operations.
+`BudgetLedger` remains a separate protocol. The bundled SQLite and PostgreSQL
+facades compose backend-specific budget components and satisfy both contracts,
+preserving the convenient `build_retriever(catalog, ...)` default.
 
 Authorization is a `RetrievalScope(tenant_id, visibility)` enforced inside
 the SQL of every candidate generator — never by post-filtering:
@@ -192,6 +332,26 @@ chunks = catalog.get_chunks([hit.chunk_id for hit in hits])
 
 Documents without a `tenant_id` are shared across tenants; documents without
 a `visibility` label are visible to every scope.
+
+For PostgreSQL, schema DDL is explicit so a deployment identity can create the
+stored `tsvector`, GIN index, tables, and indexes before runtime credentials
+are restricted to DML:
+
+```python
+from vectorstore import PostgresDocumentCatalog
+
+catalog = PostgresDocumentCatalog(
+    "postgresql://app:password@localhost/vectorstore",
+    schema_name="retrieval",
+)
+catalog.create_schema()  # deployment/bootstrap step
+catalog.validate_schema()
+```
+
+Omit the constructor connection string to read `POSTGRES_CONNECTIONSTRING`.
+The default PostgreSQL text-search configuration is `simple`, which is useful
+for technical corpora and identifiers. Pass `text_search_config="english"` (or
+another installed configuration) when linguistic stemming is preferred.
 
 ## Hybrid retrieval (the primary API)
 
@@ -271,115 +431,6 @@ request. The `RetrievalTraceObserver` protocol is dependency-free and the
 result carries no query or document text, so observers are content-safe by
 default; observer exceptions are swallowed so telemetry can never break
 retrieval.
-
-## Install
-
-Python 3.14 and [uv](https://docs.astral.sh/uv/) are required. The core
-install ships the NumPy store and OpenAI embeddings:
-
-```bash
-uv sync
-```
-
-The other backends are optional extras:
-
-```bash
-uv sync --extra chroma      # ChromaVectorStore
-uv sync --extra faiss       # FaissVectorStore
-uv sync --extra azure-sql   # AzureSqlVectorStore (Microsoft's driver)
-uv sync --extra local       # SentenceTransformerEmbedding (torch + sentence-transformers)
-```
-
-For OpenAI embeddings, export an API key:
-
-```bash
-export OPENAI_API_KEY="your-api-key"
-```
-
-## Quickstart
-
-```python
-from vectorstore import Chunk, OpenAIEmbedding, VectorIndex, create_store
-
-store = create_store("numpy")
-index = VectorIndex(OpenAIEmbedding(), store)
-
-index.index(
-    [
-        Chunk(
-            id="runbook-sso",
-            text="Troubleshoot login failures after signing certificate rotation.",
-            metadata={"doc_type": "runbook", "priority": 2},
-        ),
-        Chunk(
-            id="policy-change",
-            text="Production certificate changes require approval.",
-            metadata={"doc_type": "policy", "priority": 1},
-        ),
-    ]
-)
-
-results = index.search(
-    "users cannot log in after certificate rotation",
-    k=3,
-    filter={"doc_type": {"$in": ["runbook", "known_issue"]}},
-)
-for result in results:
-    print(result.score, result.chunk.id)
-```
-
-Filters support equality, `$in`, `$gt`, `$gte`, `$lt`, and `$lte`. Conditions
-on multiple metadata keys are ANDed together.
-
-To persist a NumPy store explicitly:
-
-```python
-from vectorstore import NumpyVectorStore
-
-store.save(".vectors")
-store = NumpyVectorStore.load(".vectors")
-```
-
-FAISS uses the same explicit persistence pattern and stores a native FAISS
-index alongside its chunk data and string-ID mapping:
-
-```python
-from vectorstore import FaissVectorStore
-
-store = create_store("faiss")
-# ...index chunks through VectorIndex...
-store.save(".faiss")
-store = FaissVectorStore.load(".faiss")
-```
-
-For automatic local persistence, create Chroma with a directory and collection:
-
-```python
-store = create_store(
-    "chroma",
-    path=".chroma",
-    collection_name="support-docs",
-)
-```
-
-For Azure SQL, use a passwordless Microsoft Entra connection string and the
-embedding dimension used by your provider:
-
-```bash
-export AZURE_SQL_CONNECTIONSTRING="Server=<server>.database.windows.net;Database=<database>;Authentication=ActiveDirectoryDefault;Encrypt=yes;TrustServerCertificate=no;"
-```
-
-```python
-from vectorstore import AzureSqlVectorStore
-
-store = AzureSqlVectorStore(dimension=1536)
-store.validate_schema()
-```
-
-Schema creation is deliberately separate from runtime access. See
-[Azure SQL setup](docs/AZURE_SQL.md) for table bootstrap, managed identity,
-least-privilege grants, firewall/private endpoint configuration, and production
-connection strings.
 
 ## Tests
 

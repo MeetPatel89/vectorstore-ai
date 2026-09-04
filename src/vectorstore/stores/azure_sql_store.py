@@ -6,7 +6,7 @@ import json
 import math
 import os
 import re
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any, override
 
@@ -81,8 +81,8 @@ class AzureSqlVectorStore(VectorStore):
             raise TypeError("connection_factory must be callable")
 
         self._dimension = dimension
-        self.schema_name = schema_name
-        self.table_name = table_name
+        self._schema_name = schema_name
+        self._table_name = table_name
         self._qualified_table = (
             f"{_quote_identifier(schema_name)}.{_quote_identifier(table_name)}"
         )
@@ -96,6 +96,16 @@ class AzureSqlVectorStore(VectorStore):
     def dimension(self) -> int:
         """The vector width required by the Azure SQL table."""
         return self._dimension
+
+    @property
+    def schema_name(self) -> str:
+        """The immutable SQL schema configured for this store."""
+        return self._schema_name
+
+    @property
+    def table_name(self) -> str:
+        """The immutable SQL table configured for this store."""
+        return self._table_name
 
     @property
     def schema_sql(self) -> str:
@@ -475,9 +485,7 @@ def _equality_predicate(value: object, label: str) -> tuple[str, list[MetadataVa
     raise ValueError(f"{label} requires a finite scalar metadata value")
 
 
-def _serialize_metadata(metadata: dict[str, MetadataValue]) -> str:
-    if not isinstance(metadata, dict):
-        raise ValueError("chunk metadata must be a dictionary")
+def _serialize_metadata(metadata: Mapping[str, MetadataValue]) -> str:
     for key, value in metadata.items():
         if not isinstance(key, str):
             raise ValueError("metadata keys must be strings")
@@ -487,7 +495,7 @@ def _serialize_metadata(metadata: dict[str, MetadataValue]) -> str:
             continue
         raise ValueError("metadata values must be finite strings, numbers, or booleans")
     return json.dumps(
-        metadata,
+        dict(metadata),
         ensure_ascii=False,
         separators=(",", ":"),
         allow_nan=False,

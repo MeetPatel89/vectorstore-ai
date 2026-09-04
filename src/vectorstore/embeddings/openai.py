@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
-from typing import Any, override
+from typing import Any, Protocol, cast, override
 
 from .base import (
     EmbeddingProvider,
@@ -28,6 +28,21 @@ _MAX_TOKENS_PER_INPUT = 8_192
 _MAX_TOKENS_PER_REQUEST = 300_000
 
 
+class OpenAIEmbeddingsResource(Protocol):
+    """The narrow SDK resource used by :class:`OpenAIEmbedding`."""
+
+    def create(self, **kwargs: object) -> Any:
+        """Create one embeddings response."""
+
+
+class OpenAIClient(Protocol):
+    """The injectable portion of an OpenAI client used by this provider."""
+
+    @property
+    def embeddings(self) -> OpenAIEmbeddingsResource:
+        """The SDK embeddings resource."""
+
+
 class OpenAIEmbedding(EmbeddingProvider):
     """Generate embeddings with OpenAI's embeddings API."""
 
@@ -39,33 +54,62 @@ class OpenAIEmbedding(EmbeddingProvider):
         dimensions: int | None = None,
         version: str = "v1",
         encoding_name: str | None = None,
+        client: OpenAIClient | None = None,
     ) -> None:
-        if batch_size <= 0:
+        if not isinstance(model, str) or not model:
+            raise ValueError("model must be a non-empty string")
+        if (
+            not isinstance(batch_size, int)
+            or isinstance(batch_size, bool)
+            or batch_size <= 0
+        ):
             raise ValueError("batch_size must be greater than zero")
         if batch_size > _MAX_INPUTS_PER_REQUEST:
             raise ValueError(f"batch_size must not exceed {_MAX_INPUTS_PER_REQUEST}")
-        if dimensions is not None and dimensions <= 0:
+        if dimensions is not None and (
+            not isinstance(dimensions, int)
+            or isinstance(dimensions, bool)
+            or dimensions <= 0
+        ):
             raise ValueError("dimensions must be greater than zero")
+        if not isinstance(version, str) or not version:
+            raise ValueError("version must be a non-empty string")
+        if encoding_name is not None and (
+            not isinstance(encoding_name, str) or not encoding_name
+        ):
+            raise ValueError("encoding_name must be a non-empty string or None")
 
-        resolved_key = api_key or os.environ.get("OPENAI_API_KEY")
-        if not resolved_key:
-            raise ValueError(
-                "OpenAI API key is required; pass api_key or set OPENAI_API_KEY"
-            )
+        self._model = model
+        self._batch_size = batch_size
+        self._dimensions = dimensions
+        self._version = version
+        self._encoding_name = encoding_name
+        self._client = client if client is not None else _default_client(api_key)
 
-        try:
-            from openai import OpenAI
-        except ImportError as exc:  # pragma: no cover - dependency is declared
-            raise ImportError("OpenAIEmbedding requires the 'openai' package") from exc
+    @property
+    def model(self) -> str:
+        """The immutable model identifier for this embedding space."""
+        return self._model
 
-        self.model = model
-        self.batch_size = batch_size
-        self.dimensions = dimensions
-        self.version = version
-        self.encoding_name = encoding_name
-        # The SDK retries rate limits, connection failures, and transient server
-        # errors with exponential backoff while keeping this provider thin.
-        self._client = OpenAI(api_key=resolved_key, max_retries=2)
+    @property
+    def batch_size(self) -> int:
+        """The immutable maximum number of inputs in one provider batch."""
+        return self._batch_size
+
+    @property
+    def dimensions(self) -> int | None:
+        """The configured output-width override, when present."""
+        return self._dimensions
+
+    @property
+    def version(self) -> str:
+        """The immutable embedding-configuration version."""
+        return self._version
+
+    @property
+    def encoding_name(self) -> str | None:
+        """The explicit tokenizer encoding override, when present."""
+        return self._encoding_name
 
     @property
     @override
@@ -197,3 +241,19 @@ class OpenAIEmbedding(EmbeddingProvider):
 
 def _as_float_list(values: Sequence[float]) -> list[float]:
     return [float(value) for value in values]
+
+
+def _default_client(api_key: str | None) -> OpenAIClient:
+    """Create the default SDK client when an application did not inject one."""
+    resolved_key = api_key or os.environ.get("OPENAI_API_KEY")
+    if not resolved_key:
+        raise ValueError(
+            "OpenAI API key is required; pass api_key or set OPENAI_API_KEY"
+        )
+    try:
+        from openai import OpenAI
+    except ImportError as exc:  # pragma: no cover - dependency is declared
+        raise ImportError("OpenAIEmbedding requires the 'openai' package") from exc
+    # The SDK retries rate limits, connection failures, and transient server
+    # errors with exponential backoff while keeping this provider thin.
+    return cast(OpenAIClient, OpenAI(api_key=resolved_key, max_retries=2))

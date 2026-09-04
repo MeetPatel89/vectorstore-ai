@@ -152,7 +152,7 @@ class NumpyVectorStore(VectorStore):
             dimension=np.asarray(dimension, dtype=np.int64),
         )
         chunk_records = [
-            {"id": chunk.id, "text": chunk.text, "metadata": chunk.metadata}
+            {"id": chunk.id, "text": chunk.text, "metadata": dict(chunk.metadata)}
             for chunk in self._chunks
         ]
         with (directory / "chunks.json").open("w", encoding="utf-8") as file:

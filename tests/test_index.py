@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from conftest import FakeEmbedding
 
 from vectorstore import (
@@ -74,3 +75,12 @@ def test_builtin_store_factory() -> None:
         create_store("azure-sql", dimension=4, connection_factory=lambda: None),
         AzureSqlVectorStore,
     )
+
+
+def test_index_dependencies_cannot_be_rebound_after_space_validation() -> None:
+    index = VectorIndex(FakeEmbedding(dimension=2), NumpyVectorStore())
+
+    with pytest.raises(AttributeError):
+        setattr(index, "embedder", FakeEmbedding(dimension=3))
+    with pytest.raises(AttributeError):
+        setattr(index, "store", NumpyVectorStore(dimension=3))

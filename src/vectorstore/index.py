@@ -23,9 +23,19 @@ class VectorIndex:
                 f"{spec.dimension}-dimensional vectors but the store expects "
                 f"{store_dimension}; use one store per embedding space"
             )
-        self.embedder = embedder
-        self.store = store
+        self._embedder = embedder
+        self._store = store
         self._spec = spec
+
+    @property
+    def embedder(self) -> EmbeddingProvider:
+        """The provider bound to this index's immutable embedding space."""
+        return self._embedder
+
+    @property
+    def store(self) -> VectorStore:
+        """The vector store bound to this index."""
+        return self._store
 
     @property
     def spec(self) -> EmbeddingSpec:

@@ -1,7 +1,7 @@
 """Embedding providers and provider-selection policy."""
 
 from .base import EmbeddingProvider, EmbeddingResult, EmbeddingSpec, EmbeddingUsage
-from .openai import OpenAIEmbedding
+from .openai import OpenAIClient, OpenAIEmbedding, OpenAIEmbeddingsResource
 from .policy import (
     EMBEDDING_COST_PER_MILLION_TOKENS,
     BudgetLedger,
@@ -30,7 +30,10 @@ from .pricing import (
     nanos_to_usd,
     usd_to_nanos,
 )
-from .sentence_transformers import SentenceTransformerEmbedding
+from .sentence_transformers import (
+    SentenceTransformerEmbedding,
+    SentenceTransformerModelFactory,
+)
 from .tokenization import TokenCountingUnavailableError
 
 __all__ = [
@@ -53,11 +56,14 @@ __all__ = [
     "EmbeddingUsageRecord",
     "InMemoryBudgetLedger",
     "NoProviderAvailableError",
+    "OpenAIClient",
     "OpenAIEmbedding",
+    "OpenAIEmbeddingsResource",
     "ProviderSelection",
     "PricingUnavailableError",
     "SelectionReason",
     "SentenceTransformerEmbedding",
+    "SentenceTransformerModelFactory",
     "TokenCountingUnavailableError",
     "UsageStatus",
     "UsdAmount",

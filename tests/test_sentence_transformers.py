@@ -31,10 +31,15 @@ class TestSpec:
         assert provider.spec.dimension == 512
 
     def test_constructing_does_not_load_the_model(self) -> None:
-        provider = SentenceTransformerEmbedding(
-            model="some-unknown-model-xyz", dimension=4
+        factory_calls: list[tuple[str, str | None]] = []
+
+        SentenceTransformerEmbedding(
+            model="some-unknown-model-xyz",
+            dimension=4,
+            model_factory=lambda model, device: factory_calls.append((model, device)),
         )
-        assert provider._loaded_model is None
+
+        assert factory_calls == []
 
     def test_rejects_invalid_arguments(self) -> None:
         with pytest.raises(ValueError):

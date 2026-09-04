@@ -1,0 +1,72 @@
+---
+description: Keep the root README accurate, evidence-based, and synchronized with every user-visible project change.
+alwaysApply: true
+---
+# README Maintenance
+
+Treat `README.md` as part of the product. It must describe the repository as it exists in the current branch, not as it was originally planned or as it may exist later.
+
+## Required behavior for every task
+
+1. Perform a README impact check before considering the task complete.
+2. Update `README.md` in the same change whenever code, configuration, dependencies, commands, defaults, architecture, supported inputs, outputs, setup, tests, safety boundaries, or known limitations change.
+3. Remove or correct stale documentation when behavior is deleted, renamed, or superseded.
+4. If a change has no reader-visible impact, do not create README churn merely to show that it was checked.
+5. Verify documentation against source code, `pyproject.toml`, tests, and executable help output. Do not rely on memory.
+
+Common triggers include:
+
+| Change | README sections to inspect |
+| --- | --- |
+| CLI command, flag, or default | Quickstart, Usage, Configuration |
+| Dependency or Python version | Prerequisites, Installation, Tech stack |
+| Environment variable or credential | Configuration, Security |
+| Provider, model, vector store, or tool | Capabilities, Architecture, Configuration, Limitations |
+| Ingestion format or data contract | Usage, Workflow, Example input |
+| Public module or major directory | Architecture, Project structure |
+| Guardrail, approval boundary, or external action | Safety, Failure modes |
+| Test or evaluation strategy | Testing, Evaluation |
+
+## Content standard
+
+Keep the opening skimmable. A new reader should understand the value, maturity, prerequisites, and first useful command without reading the entire file. Use this order when the sections apply:
+
+1. Project title and one-sentence value proposition.
+2. Project status and current capabilities.
+3. Quickstart with prerequisites, installation, configuration, and the shortest working example.
+4. Exact usage commands with representative inputs and outputs.
+5. Problem context, target user, and job to be done.
+6. Why model- or agent-driven behavior is useful, and which work remains deterministic.
+7. Architecture and an observable end-to-end workflow.
+8. Configuration reference, including defaults and persistence locations.
+9. Testing and evaluation strategy.
+10. Guardrails, data handling, failure modes, and tradeoffs.
+11. Project structure and extension points.
+12. Roadmap, contributing, demo links, license, and authorship only when factual information exists.
+
+Do not force empty or irrelevant template sections into the README. Prefer a shorter truthful section over placeholder text.
+
+## Accuracy and trust rules
+
+- Use commands that can be copied from the repository root.
+- Keep names, paths, model IDs, defaults, and environment variables identical to the implementation.
+- Clearly distinguish implemented behavior, experimental behavior, limitations, and future work.
+- Never invent performance claims, adoption numbers, demo links, maintainers, licenses, roadmap commitments, or evaluation results.
+- Date or qualify measured results when they may become stale. Prefer stable test commands over hard-coded test counts.
+- Never put secrets, real API keys, private data, internal URLs, or sensitive logs in the README.
+- Document observable planning, tool calls, state transitions, validation, and fallback behavior. Never expose or request hidden chain-of-thought.
+- Do not claim that chat responses are retrieval-grounded unless retrieved context is actually supplied to the model in the active code path.
+- Treat examples as tests of the documentation: update or remove them when they no longer match real behavior.
+
+## Completion checklist
+
+Before finishing a README-impacting task, confirm:
+
+- The overview describes what works now.
+- The quickstart works from a fresh checkout with documented prerequisites.
+- Commands, flags, defaults, file paths, and environment variables match the code.
+- Architecture and workflow omit removed components and include material new ones.
+- Safety, data handling, and limitations reflect the current implementation.
+- Future work is labeled as future work.
+- Links and referenced files exist.
+- Markdown renders cleanly and contains no placeholders left by accident.

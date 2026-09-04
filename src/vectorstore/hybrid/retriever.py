@@ -18,9 +18,9 @@ from dataclasses import dataclass, field
 from vectorstore.catalog.base import (
     CatalogChunk,
     CatalogDocument,
-    DocumentCatalog,
     LexicalUnavailableError,
     RankedHit,
+    RetrievalCatalog,
     RetrievalScope,
 )
 from vectorstore.embeddings.policy import (
@@ -138,7 +138,7 @@ def merge_scope_filter(
     """
     if scope is None or (scope.tenant_id is None and scope.visibility is None):
         return filter
-    merged: MetadataFilter = dict(filter or {})
+    merged: dict[str, object] = dict(filter or {})
     if scope.tenant_id is not None:
         merged["tenant_id"] = scope.tenant_id
     if scope.visibility is not None:
@@ -169,7 +169,7 @@ class Retriever:
 
     def __init__(
         self,
-        catalog: DocumentCatalog,
+        catalog: RetrievalCatalog,
         stores: Mapping[str, VectorStore] | None = None,
         router: EmbeddingRouter | None = None,
         analyzer: QueryAnalyzer | None = None,

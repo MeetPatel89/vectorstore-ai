@@ -53,8 +53,8 @@ def main() -> int:
     fallback = HashEmbedding(dimension=96, model="blake2b-bow-fallback")
 
     print("PHASE 2 — PROVIDER ROUTING")
-    print(f"Primary space:  {primary.spec.space_id}")
-    print(f"Fallback space: {fallback.spec.space_id}")
+    print(f"Primary space:  {primary.spec.space_id}\n{primary.spec}")
+    print(f"Fallback space: {fallback.spec.space_id}\n{fallback.spec}")
 
     normal_router = EmbeddingRouter(primary, fallback)
     normal = normal_router.select("query", texts=[DEMO_QUERY])

@@ -7,8 +7,10 @@ from .base import (
     EmbeddingState,
     LexicalUnavailableError,
     RankedHit,
+    RetrievalCatalog,
     RetrievalScope,
 )
+from .postgres_catalog import PostgresDocumentCatalog
 from .sqlite_catalog import SqliteDocumentCatalog
 
 __all__ = [
@@ -17,7 +19,9 @@ __all__ = [
     "DocumentCatalog",
     "EmbeddingState",
     "LexicalUnavailableError",
+    "PostgresDocumentCatalog",
     "RankedHit",
+    "RetrievalCatalog",
     "RetrievalScope",
     "SqliteDocumentCatalog",
 ]

@@ -14,9 +14,11 @@ retrieval:
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 
-from vectorstore.models import MetadataValue
+from vectorstore.models import MetadataValue, _freeze_metadata
 
 
 @dataclass(frozen=True)
@@ -29,16 +31,17 @@ class Record:
     """
 
     id: str
-    semantic_fields: dict[str, str]
-    structured: dict[str, MetadataValue] = field(default_factory=dict)
+    semantic_fields: Mapping[str, str]
+    structured: Mapping[str, MetadataValue] = field(default_factory=dict)
     source: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.id, str) or not self.id:
             raise ValueError("record IDs must be non-empty strings")
-        if not isinstance(self.semantic_fields, dict):
-            raise ValueError("semantic_fields must be a dictionary")
-        for label, value in self.semantic_fields.items():
+        if not isinstance(self.semantic_fields, Mapping):
+            raise ValueError("semantic_fields must be a mapping")
+        semantic_fields = dict(self.semantic_fields)
+        for label, value in semantic_fields.items():
             if not isinstance(label, str) or not label:
                 raise ValueError("semantic field labels must be non-empty strings")
             if not isinstance(value, str):
@@ -46,8 +49,16 @@ class Record:
                     f"semantic field {label!r} must be a string, "
                     f"got {type(value).__name__}"
                 )
-        if not isinstance(self.structured, dict):
-            raise ValueError("structured attributes must be a dictionary")
+        object.__setattr__(
+            self,
+            "semantic_fields",
+            MappingProxyType(semantic_fields),
+        )
+        object.__setattr__(
+            self,
+            "structured",
+            _freeze_metadata(self.structured, label="structured attributes"),
+        )
 
 
 def semantic_projection(record: Record) -> str:

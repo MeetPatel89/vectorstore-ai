@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from threading import Barrier
+from typing import cast
 
 import pytest
 from conftest import FakeEmbedding
@@ -144,6 +145,25 @@ class TestValueObjects:
     def test_chunk_computes_content_hash_by_default(self) -> None:
         chunk = CatalogChunk(chunk_id="c1", doc_id="d1", text="hello")
         assert chunk.content_hash == content_hash("hello")
+
+    def test_chunk_rejects_invalid_lifecycle_state(self) -> None:
+        with pytest.raises(ValueError, match="chunk_index"):
+            CatalogChunk(chunk_id="c1", doc_id="d1", text="hello", chunk_index=-1)
+        with pytest.raises(ValueError, match="active"):
+            CatalogChunk(
+                chunk_id="c1",
+                doc_id="d1",
+                text="hello",
+                active=cast(bool, 1),
+            )
+
+    def test_document_snapshots_attributes(self) -> None:
+        attributes = {"status_code": 3}
+        document = CatalogDocument(doc_id="doc", attributes=attributes)
+
+        attributes["status_code"] = 4
+
+        assert document.attributes == {"status_code": 3}
 
     def test_scope_rejects_empty_visibility_tuple(self) -> None:
         with pytest.raises(ValueError):
