@@ -4,8 +4,8 @@ A :class:`DocumentCatalog` is the system of record for searchable documents.
 It owns three of the four retrieval concerns:
 
 - structured source data (documents and chunks with filterable attributes),
-- the lexical/full-text index (database-native, e.g. SQLite FTS5 or
-  PostgreSQL tsvector/GIN),
+- the lexical/full-text index (database-native SQLite FTS5, PostgreSQL
+  tsvector/GIN, or Azure SQL Full-Text Search),
 - the embedding lifecycle ledger (which vector was built from which content).
 
 Budget accounting is a separate application boundary represented by
@@ -250,8 +250,8 @@ class RetrievalCatalog(Protocol):
 class DocumentCatalog(RetrievalCatalog, Protocol):
     """Mutable document catalog with embedding-lifecycle state.
 
-    Implementations (SQLite and PostgreSQL today, Azure SQL later) push scope
-    and metadata filters down into SQL. The bundled implementations separately
+    Implementations for SQLite, PostgreSQL, and Azure SQL push scope and
+    metadata filters down into SQL. The bundled implementations separately
     satisfy :class:`~vectorstore.embeddings.policy.BudgetLedger`; budget methods
     deliberately do not belong to this document-storage contract.
     """

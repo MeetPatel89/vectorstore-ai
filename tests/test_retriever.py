@@ -528,6 +528,30 @@ class TestObserver:
         result = retriever.retrieve("payment reconciliation")
         assert result.hits
 
+    def test_result_carries_content_safe_trace_dimensions(
+        self, catalog: SqliteDocumentCatalog, primary: FakeEmbedding
+    ) -> None:
+        retriever = make_retriever(catalog, primary)
+
+        result = retriever.retrieve(
+            "payment reconciliation",
+            filter={"doc_type": "incident"},
+            scope=RetrievalScope(tenant_id="acme", visibility=("internal",)),
+            k=3,
+        )
+
+        assert result.filters_count == 1
+        assert result.scope_tenant == "acme"
+        assert result.dense_top_k == 50
+        assert result.lexical_top_k == 50
+        assert result.final_top_k == 3
+        assert result.embedding_input_tokens is not None
+        assert result.dense_backend == "numpy"
+        assert result.lexical_backend == "sqlite"
+        assert result.timings.embedding_ms is not None
+        assert result.timings.dense_search_ms is not None
+        assert result.timings.fusion_ms is not None
+
 
 class TestBuildRetriever:
     def test_builds_hybrid_retriever_with_catalog_ledger(

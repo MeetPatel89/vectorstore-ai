@@ -1,5 +1,6 @@
 """Document catalogs: structured find, lexical search, and retrieval ledgers."""
 
+from .azure_sql_catalog import AzureSqlCatalog, AzureSqlDocumentCatalog
 from .base import (
     CatalogChunk,
     CatalogDocument,
@@ -14,6 +15,8 @@ from .postgres_catalog import PostgresDocumentCatalog
 from .sqlite_catalog import SqliteDocumentCatalog
 
 __all__ = [
+    "AzureSqlCatalog",
+    "AzureSqlDocumentCatalog",
     "CatalogChunk",
     "CatalogDocument",
     "DocumentCatalog",

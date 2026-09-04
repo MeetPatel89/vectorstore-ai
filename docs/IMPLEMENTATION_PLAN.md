@@ -2,7 +2,8 @@
 
 > Historical note: this document describes the original dense-only v0.1
 > implementation. The package now also includes catalogs, hybrid retrieval,
-> provider routing, and Markdown/CSV/JSON ingestion. See
+> provider routing, Markdown/CSV/JSON ingestion, Azure SQL Full-Text catalog
+> support, and OpenTelemetry retrieval observation. See
 > [`retrieval_subsystem_architecture_b3bc2187.plan.md`](../retrieval_subsystem_architecture_b3bc2187.plan.md)
 > and the root README for the current architecture and commands.
 

@@ -2,13 +2,15 @@
 
 The core library never imports an observability framework. It emits one
 :class:`~vectorstore.hybrid.retriever.RetrievalResult` per request to a
-:class:`RetrievalTraceObserver`; an OpenTelemetry implementation (optional
-extra) can reconstruct spans from the result's phase timings, and
+:class:`RetrievalTraceObserver`; the optional
+:class:`~vectorstore.observability.otel.OTelRetrievalObserver` reconstructs
+spans from the result's phase timings, and
 applications can bridge to whatever exporter stack they already run.
 
-The result deliberately carries no query or document text — only IDs,
-ranks, reasons, and timings — so observers are content-safe by default.
-Content capture, if wanted, is an observer implementation decision.
+The result deliberately does not retain query text. It does contain hydrated
+hit chunks for application use, so custom observers must choose content-safe
+fields. The bundled OpenTelemetry observer emits only IDs, ranks, reasons,
+counts, and timings.
 """
 
 from __future__ import annotations

@@ -2640,6 +2640,9 @@ local = [
     { name = "sentence-transformers" },
     { name = "torch" },
 ]
+otel = [
+    { name = "opentelemetry-api" },
+]
 postgres = [
     { name = "psycopg", extra = ["binary"] },
 ]
@@ -2649,6 +2652,7 @@ dev = [
     { name = "chromadb" },
     { name = "faiss-cpu" },
     { name = "mypy" },
+    { name = "opentelemetry-sdk" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -2662,19 +2666,21 @@ requires-dist = [
     { name = "mssql-python", marker = "extra == 'azure-sql'", specifier = ">=1.11.0" },
     { name = "numpy", specifier = ">=2.1" },
     { name = "openai", specifier = ">=1.0" },
+    { name = "opentelemetry-api", marker = "extra == 'otel'", specifier = ">=1.30" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "sentence-transformers", marker = "extra == 'local'", specifier = ">=5.0" },
     { name = "tiktoken", specifier = ">=0.12.0" },
     { name = "torch", marker = "extra == 'local'", specifier = ">=2.9" },
 ]
-provides-extras = ["chroma", "faiss", "azure-sql", "local", "postgres"]
+provides-extras = ["chroma", "faiss", "azure-sql", "local", "otel", "postgres"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "chromadb", specifier = ">=1.5.5" },
     { name = "faiss-cpu", specifier = ">=1.14.3" },
     { name = "mypy", specifier = ">=2.3.0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.30" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.24.0" },
     { name = "ruff", specifier = ">=0.16.2" },

@@ -127,3 +127,14 @@ The top-level `uv run python main.py` command runs this same walkthrough. Both
 commands default to the offline hash provider; `--provider openai` and
 `--provider local` select the real providers under the same requirements as
 the earlier demos.
+
+## Phase 6: production integrations
+
+Phase 6 adds adapters rather than another offline retrieval algorithm:
+`OTelRetrievalObserver` turns the content-safe result envelope into a root span
+and timed phase children, while `AzureSqlDocumentCatalog` supplies structured,
+Full-Text, lifecycle, and durable-budget storage behind the same catalog
+protocol used by the demos. Both are documented in the root README. The OTel
+adapter requires `--extra otel`; the Azure catalog requires
+`--extra azure-sql` and an Azure SQL database with a deployment identity able
+to provision Full-Text objects.

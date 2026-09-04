@@ -10,6 +10,7 @@ graceful degradation, so retrieval keeps working while any signal remains.
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from collections.abc import Mapping
@@ -37,6 +38,23 @@ from vectorstore.stores.base import VectorStore
 
 from .fusion import DEFAULT_RRF_K, rrf
 from .query import QueryAnalyzer, QueryKind, QueryProfile
+
+_BACKEND_SUFFIXES = (
+    "_document_catalog",
+    "_vector_store",
+    "_catalog",
+    "_store",
+)
+
+
+def _backend_name(component: object) -> str:
+    """Derive a stable diagnostic backend name from an injected component."""
+    name = re.sub(r"(?<!^)(?=[A-Z])", "_", type(component).__name__).lower()
+    for suffix in _BACKEND_SUFFIXES:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    return name.replace("azure_sql", "azure-sql")
 
 
 @dataclass(frozen=True)
@@ -86,6 +104,9 @@ class RetrievalTimings:
     dense_ms: float | None
     lexical_ms: float | None
     total_ms: float
+    embedding_ms: float | None = None
+    dense_search_ms: float | None = None
+    fusion_ms: float | None = None
 
 
 @dataclass(frozen=True)
@@ -94,7 +115,8 @@ class RetrievalResult:
 
     Carries provenance (provider, reason, fallback), degradation state, and
     per-signal ranks on every hit — the seams the evaluation plan relies on
-    — without any query or document text.
+    — without retaining query text. Hits remain hydrated with chunk text for
+    the calling application; the bundled observer deliberately ignores it.
     """
 
     hits: tuple[RetrievalHit, ...]
@@ -113,6 +135,15 @@ class RetrievalResult:
     timings: RetrievalTimings
     fusion_method: str = "rrf"
     errors: tuple[str, ...] = field(default=())
+    filters_count: int = 0
+    scope_tenant: str | None = None
+    dense_top_k: int = 0
+    lexical_top_k: int = 0
+    final_top_k: int = 0
+    embedding_input_tokens: int | None = None
+    embedding_estimated_usd: float | None = None
+    dense_backend: str | None = None
+    lexical_backend: str | None = None
 
 
 @dataclass(frozen=True)
@@ -122,6 +153,11 @@ class _DenseOutcome:
     fallback_occurred: bool
     attempted: bool
     errors: tuple[str, ...]
+    embedding_ms: float | None = None
+    search_ms: float | None = None
+    input_tokens: int | None = None
+    estimated_usd: float | None = None
+    backend: str | None = None
 
 
 def merge_scope_filter(
@@ -279,7 +315,9 @@ class Retriever:
             lexical_ms = (time.perf_counter() - lexical_started) * 1000
 
         dense_results = dense.results if dense is not None else []
+        fusion_started = time.perf_counter()
         hits = self._fuse(dense_results, lexical_hits, profile, final_k)
+        fusion_ms = (time.perf_counter() - fusion_started) * 1000
 
         degraded = (
             dense_wanted and (dense is None or not dense.attempted)
@@ -304,8 +342,24 @@ class Retriever:
                 dense_ms=dense_ms,
                 lexical_ms=lexical_ms,
                 total_ms=(time.perf_counter() - started) * 1000,
+                embedding_ms=dense.embedding_ms if dense else None,
+                dense_search_ms=dense.search_ms if dense else None,
+                fusion_ms=fusion_ms,
             ),
             errors=tuple(errors),
+            filters_count=len(filter or {}),
+            scope_tenant=scope.tenant_id if scope else None,
+            dense_top_k=(self._config.dense_top_k if self._config.dense_enabled else 0),
+            lexical_top_k=(
+                self._config.lexical_top_k if self._config.lexical_enabled else 0
+            ),
+            final_top_k=final_k,
+            embedding_input_tokens=dense.input_tokens if dense else None,
+            embedding_estimated_usd=dense.estimated_usd if dense else None,
+            dense_backend=dense.backend if dense else None,
+            lexical_backend=(
+                _backend_name(self._catalog) if self._config.lexical_enabled else None
+            ),
         )
         self._notify(result)
         return result
@@ -315,6 +369,14 @@ class Retriever:
     def _dense_search(self, query: str, filter: MetadataFilter | None) -> _DenseOutcome:
         assert self._router is not None
         errors: list[str] = []
+        embedding_ms = 0.0
+        search_ms = 0.0
+        embedding_attempted = False
+        search_attempted = False
+        input_tokens = 0
+        observed_tokens = False
+        estimated_usd = 0.0
+        observed_cost = False
 
         try:
             selection = self._router.select("query", texts=[query])
@@ -356,34 +418,47 @@ class Retriever:
                 continue
 
             candidate_is_primary = candidate.provider is self._router.primary
+            embedding_attempted = True
+            embedding_started = time.perf_counter()
             try:
                 embedding = candidate.provider.embed_query_with_usage(query)
                 vector = embedding.vector
             except Exception as exc:  # noqa: BLE001 - degrade, never fail retrieval
+                embedding_ms += (time.perf_counter() - embedding_started) * 1000
                 if candidate_is_primary:
                     self._router.record_failure(candidate.reservation)
                 errors.append(f"embedding failed ({candidate.spec.space_id}): {exc}")
                 continue
+            embedding_ms += (time.perf_counter() - embedding_started) * 1000
+            tokens = (
+                embedding.usage.input_tokens
+                if embedding.usage is not None
+                else candidate.provider.estimate_tokens([query])
+            )
+            input_tokens += tokens
+            observed_tokens = True
             if candidate_is_primary:
-                tokens = (
-                    embedding.usage.input_tokens
-                    if embedding.usage is not None
-                    else candidate.provider.estimate_tokens([query])
-                )
-                self._router.record_usage(
+                charge = self._router.record_usage(
                     tokens,
                     reservation=candidate.reservation,
                 )
+                if charge.usd is not None:
+                    estimated_usd += float(charge.usd)
+                    observed_cost = True
 
+            search_started = time.perf_counter()
+            search_attempted = True
             try:
                 results = store.search(
                     vector, k=self._config.dense_top_k, filter=filter
                 )
             except Exception as exc:  # noqa: BLE001 - degrade, never fail retrieval
+                search_ms += (time.perf_counter() - search_started) * 1000
                 errors.append(
                     f"vector search failed ({candidate.spec.space_id}): {exc}"
                 )
                 continue
+            search_ms += (time.perf_counter() - search_started) * 1000
 
             return _DenseOutcome(
                 results=results,
@@ -391,6 +466,11 @@ class Retriever:
                 fallback_occurred=candidate.is_fallback or attempt > 0,
                 attempted=True,
                 errors=tuple(errors),
+                embedding_ms=embedding_ms if embedding_attempted else None,
+                search_ms=search_ms if search_attempted else None,
+                input_tokens=input_tokens if observed_tokens else None,
+                estimated_usd=estimated_usd if observed_cost else None,
+                backend=_backend_name(store),
             )
 
         return _DenseOutcome(
@@ -399,6 +479,10 @@ class Retriever:
             fallback_occurred=False,
             attempted=False,
             errors=tuple(errors),
+            embedding_ms=embedding_ms if embedding_attempted else None,
+            search_ms=search_ms if search_attempted else None,
+            input_tokens=input_tokens if observed_tokens else None,
+            estimated_usd=estimated_usd if observed_cost else None,
         )
 
     # -- fusion and hydration -----------------------------------------------

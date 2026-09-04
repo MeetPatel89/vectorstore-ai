@@ -32,12 +32,12 @@ change because a caller later mutates an input dictionary.
 
 ## Status
 
-The package is pre-1.0 (`0.1.0`). Structured retrieval, SQLite and PostgreSQL
-full-text catalogs, four dense stores, embedding-provider routing and budgets,
-hybrid RRF retrieval, Markdown/CSV/JSON ingestion, section and generic
-chunking, embedding lifecycle repair, and dependency-free retrieval
-observation are implemented. OpenTelemetry export and an Azure SQL full-text
-catalog remain roadmap work.
+The package is pre-1.0 (`0.1.0`). Structured retrieval, SQLite, PostgreSQL,
+and Azure SQL full-text catalogs, four dense stores, embedding-provider routing
+and budgets, hybrid RRF retrieval, Markdown/CSV/JSON ingestion, section and
+generic chunking, embedding lifecycle repair, dependency-free retrieval
+observation, and optional OpenTelemetry tracing are implemented. Release and
+downstream-application migration remain roadmap work.
 
 ## Install
 
@@ -48,13 +48,14 @@ install ships the NumPy store and OpenAI embeddings:
 uv sync
 ```
 
-The other backends are optional extras:
+The other backends and integrations are optional extras:
 
 ```bash
 uv sync --extra chroma      # ChromaVectorStore
 uv sync --extra faiss       # FaissVectorStore
-uv sync --extra azure-sql   # AzureSqlVectorStore (Microsoft's driver)
+uv sync --extra azure-sql   # AzureSqlVectorStore + AzureSqlDocumentCatalog
 uv sync --extra local       # SentenceTransformerEmbedding (torch + sentence-transformers)
+uv sync --extra otel        # OTelRetrievalObserver (API only; app owns SDK/exporters)
 uv sync --extra postgres    # PostgresDocumentCatalog (Psycopg 3)
 ```
 
@@ -341,22 +342,26 @@ be reconciled separately against organization billing data.
 
 ## Document catalog (structured find, lexical search, ledgers)
 
-`SqliteDocumentCatalog` (standard library only) and
-`PostgresDocumentCatalog` (the optional `postgres` extra) are interchangeable
-systems of record for searchable documents. They own everything except the
-dense vectors themselves, which stay in per-space vector stores:
+`SqliteDocumentCatalog` (standard library only), `PostgresDocumentCatalog`
+(the optional `postgres` extra), and `AzureSqlDocumentCatalog` (the optional
+`azure-sql` extra) are interchangeable systems of record for searchable
+documents. They own everything except the dense vectors themselves, which stay
+in per-space vector stores:
 
 - **Structured retrieval**: `find(filter, scope, limit)` queries documents by
   their natural attributes (`doc_type`, `status`, `tenant_id`, ...) plus any
   custom attributes, using the same filter syntax as vector search. Filters
   are pushed down into SQL (`json_extract` in SQLite and typed `JSONB`
-  predicates in PostgreSQL for custom attributes).
+  predicates in PostgreSQL, and typed `OPENJSON` predicates in Azure SQL for
+  custom attributes).
 - **Lexical retrieval**: `search_lexical(query, k, filter, scope)` uses either
   SQLite FTS5 with BM25 ranking or a PostgreSQL stored `tsvector` with a GIN
   inverted index and `ts_rank_cd` ranking. SQLite sanitizes queries into safe
   MATCH expressions; PostgreSQL parameterizes raw input and converts it with
-  `websearch_to_tsquery`, which also preserves quoted-phrase semantics. Exact
-  identifiers like `INC-1104` or `SQLSTATE 23505` are first-class here.
+  `websearch_to_tsquery`, which also preserves quoted-phrase semantics. Azure
+  SQL uses a parameterized, safely constructed `CONTAINSTABLE` condition and
+  native Full-Text ranks. Exact identifiers like `INC-1104` or
+  `SQLSTATE 23505` are first-class here.
   A typed `LexicalUnavailableError` lets callers degrade to dense + structured
   retrieval when the backend's lexical schema is unavailable.
 - **Embedding lifecycle ledger**: `mark_embedded(chunk_id, spec, hash)`
@@ -373,8 +378,8 @@ dense vectors themselves, which stay in per-space vector stores:
 The public boundaries stay focused: `Retriever` depends only on
 `RetrievalCatalog` (`find`, `search_lexical`, and `get_chunks`), while
 `DocumentCatalog` adds mutation and embedding-lifecycle operations.
-`BudgetLedger` remains a separate protocol. The bundled SQLite and PostgreSQL
-facades compose backend-specific budget components and satisfy both contracts,
+`BudgetLedger` remains a separate protocol. All three bundled catalog facades
+compose backend-specific budget components and satisfy both contracts,
 preserving the convenient `build_retriever(catalog, ...)` default.
 
 Authorization is a `RetrievalScope(tenant_id, visibility)` enforced inside
@@ -440,6 +445,30 @@ Omit the constructor connection string to read `POSTGRES_CONNECTIONSTRING`.
 The default PostgreSQL text-search configuration is `simple`, which is useful
 for technical corpora and identifiers. Pass `text_search_config="english"` (or
 another installed configuration) when linguistic stemming is preferred.
+
+Azure SQL uses the same explicit deployment/runtime split. Schema version,
+Full-Text catalog name, language LCID, key index, and automatic change tracking
+are validated before use:
+
+```python
+from vectorstore import AzureSqlDocumentCatalog
+
+catalog = AzureSqlDocumentCatalog(
+    "Server=example.database.windows.net;Database=retrieval;...",
+    schema_name="dbo",
+    fulltext_catalog_name="vectorstore_catalog_fulltext",
+    language_lcid=1033,
+)
+catalog.create_schema()  # deployment identity; Full-Text DDL uses autocommit
+catalog.validate_schema()
+```
+
+Omit the connection string to read `AZURE_SQL_CONNECTIONSTRING`. Table and
+ledger DDL is transactional; Full-Text catalog/index creation is deliberately
+run on a separate autocommit connection because
+[SQL Server disallows `CREATE FULLTEXT INDEX` inside a user transaction](https://learn.microsoft.com/en-us/sql/t-sql/statements/create-fulltext-index-transact-sql?view=sql-server-ver17).
+Runtime identities need DML, `SELECT`, and Full-Text query permissions, not
+schema-creation permissions.
 
 ## Hybrid retrieval (the primary API)
 
@@ -516,9 +545,34 @@ evaluation plan consumes to compare dense/lexical/hybrid arms.
 Pass any object with an `on_retrieve(result)` method as
 `build_retriever(..., observer=...)` to receive one `RetrievalResult` per
 request. The `RetrievalTraceObserver` protocol is dependency-free and the
-result carries no query or document text, so observers are content-safe by
-default; observer exceptions are swallowed so telemetry can never break
-retrieval.
+result does not retain query text. Hydrated hits do carry chunk text for the
+application, so custom observers must select safe fields. The bundled OTel
+observer emits IDs and operational metadata only; observer exceptions are
+swallowed so telemetry can never break retrieval.
+
+Install the `otel` extra and inject a tracer from the provider your application
+already configures:
+
+```python
+from opentelemetry import trace
+from vectorstore import OTelRetrievalObserver, build_retriever
+
+observer = OTelRetrievalObserver(
+    trace.get_tracer("my-app.retrieval"),
+    attributes={"langfuse.trace.metadata.environment": "production"},
+)
+retriever = build_retriever(catalog, observer=observer)  # lexical-only example
+```
+
+The observer reconstructs a `retrieve` root span with `embeddings <model>`,
+`dense.search <backend>`, `lexical.search <backend>`, and `fuse rrf` children.
+It emits GenAI embedding attributes, `retrieval.*` provider/scope/rank/count/
+latency/cost attributes, result IDs, and `retrieval.fallback`,
+`retrieval.degraded`, and `budget.threshold_crossed` events. Exporters,
+processors, sampling, and resources remain application-owned. Custom root
+attributes pass through, while generated retrieval attributes win collisions.
+Error categories and counts are recorded, but backend exception messages are
+not exported because they may contain sensitive request or connection details.
 
 ## Tests
 

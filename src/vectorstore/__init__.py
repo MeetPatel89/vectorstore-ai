@@ -1,6 +1,8 @@
 """Extensible vector storage and semantic search."""
 
 from .catalog import (
+    AzureSqlCatalog,
+    AzureSqlDocumentCatalog,
     CatalogChunk,
     CatalogDocument,
     DocumentCatalog,
@@ -90,6 +92,10 @@ from .ingestion import (
 )
 from .models import Chunk, MetadataFilter, MetadataValue, SearchResult
 from .observability import NoOpRetrievalObserver, RetrievalTraceObserver
+from .observability.otel import (
+    OpenTelemetryRetrievalObserver,
+    OTelRetrievalObserver,
+)
 from .records import Record, content_hash, semantic_projection
 from .stores import (
     AzureSqlVectorStore,
@@ -102,6 +108,8 @@ from .stores import (
 )
 
 __all__ = [
+    "AzureSqlCatalog",
+    "AzureSqlDocumentCatalog",
     "AzureSqlVectorStore",
     "CSVSourceAdapter",
     "DEFAULT_MAX_WORDS",
@@ -151,6 +159,8 @@ __all__ = [
     "OpenAIClient",
     "OpenAIEmbedding",
     "OpenAIEmbeddingsResource",
+    "OpenTelemetryRetrievalObserver",
+    "OTelRetrievalObserver",
     "ProviderSelection",
     "PricingUnavailableError",
     "PrimaryProviderRequiredError",
