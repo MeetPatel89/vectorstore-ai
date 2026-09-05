@@ -10,6 +10,7 @@ from typing import Any, override
 import pytest
 
 from scripts.publish_release import GitHubReleaseClient, publish_release
+from scripts.recreate_release_tag import recreate_release_tag
 from scripts.release_metadata import check_main, release_notes
 
 COMMIT = "a" * 40
@@ -323,3 +324,119 @@ def test_conflicting_release_body_is_not_overwritten(bundle: Path) -> None:
         publish_release(client, bundle, TAG, COMMIT)
     assert not client.uploads
     assert client.publications == 0
+
+
+def _git(cwd: Path, *arguments: str) -> str:
+    return run(
+        [
+            "git",
+            "-c",
+            "user.name=CI Test",
+            "-c",
+            "user.email=ci@example.invalid",
+            *arguments,
+        ],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _release_clone(tmp_path: Path) -> Path:
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    run(
+        ["git", "init", "--bare", "-b", "main", str(origin)],
+        check=True,
+        capture_output=True,
+    )
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.name", "CI Test")
+    _git(repo, "config", "user.email", "ci@example.invalid")
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "vectorstore-ai"\nversion = "0.2.0"\n',
+        encoding="utf-8",
+    )
+    (repo / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [Unreleased]\n\n" + NOTES,
+        encoding="utf-8",
+    )
+    _git(repo, "add", "pyproject.toml", "CHANGELOG.md")
+    _git(repo, "commit", "-m", "release notes")
+    _git(repo, "remote", "add", "origin", str(origin))
+    _git(repo, "push", "-u", "origin", "main")
+    return repo
+
+
+def _tagged_commit(repository: Path, tag: str) -> str:
+    return _git(repository, "rev-parse", f"{tag}^{{commit}}")
+
+
+def _origin(repository: Path) -> Path:
+    return repository.parent / "origin.git"
+
+
+def test_new_release_tag_is_pushed_to_origin(tmp_path: Path) -> None:
+    repo = _release_clone(tmp_path)
+    head = _git(repo, "rev-parse", "HEAD")
+    recreate_release_tag(repo, TAG)
+    assert _tagged_commit(repo, TAG) == head
+    assert _tagged_commit(_origin(repo), TAG) == head
+
+
+def test_existing_tag_is_not_replaced_without_an_explicit_flag(
+    tmp_path: Path,
+) -> None:
+    repo = _release_clone(tmp_path)
+    recreate_release_tag(repo, TAG)
+    first = _tagged_commit(_origin(repo), TAG)
+    (repo / "note").write_text("later\n", encoding="utf-8")
+    _git(repo, "add", "note")
+    _git(repo, "commit", "-m", "later")
+    _git(repo, "push", "origin", "main")
+    with pytest.raises(ValueError, match="already exists"):
+        recreate_release_tag(repo, TAG)
+    assert _tagged_commit(_origin(repo), TAG) == first
+
+
+def test_replace_existing_moves_the_tag_after_validation(tmp_path: Path) -> None:
+    repo = _release_clone(tmp_path)
+    recreate_release_tag(repo, TAG)
+    (repo / "note").write_text("later\n", encoding="utf-8")
+    _git(repo, "add", "note")
+    _git(repo, "commit", "-m", "later")
+    _git(repo, "push", "origin", "main")
+    head = _git(repo, "rev-parse", "HEAD")
+    recreate_release_tag(repo, TAG, replace_existing=True)
+    assert _tagged_commit(repo, TAG) == head
+    assert _tagged_commit(_origin(repo), TAG) == head
+
+
+def test_failed_validation_does_not_delete_an_existing_tag(tmp_path: Path) -> None:
+    repo = _release_clone(tmp_path)
+    recreate_release_tag(repo, TAG)
+    first = _tagged_commit(_origin(repo), TAG)
+    (repo / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [Unreleased]\n", encoding="utf-8"
+    )
+    _git(repo, "add", "CHANGELOG.md")
+    _git(repo, "commit", "-m", "drop notes")
+    _git(repo, "push", "origin", "main")
+    with pytest.raises(ValueError, match="dated release entry"):
+        recreate_release_tag(repo, TAG, replace_existing=True)
+    assert _tagged_commit(_origin(repo), TAG) == first
+
+
+def test_dirty_tree_and_unpushed_head_are_rejected(tmp_path: Path) -> None:
+    repo = _release_clone(tmp_path)
+    (repo / "dirty").write_text("nope\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="clean"):
+        recreate_release_tag(repo, TAG)
+    (repo / "dirty").unlink()
+    (repo / "local").write_text("ahead\n", encoding="utf-8")
+    _git(repo, "add", "local")
+    _git(repo, "commit", "-m", "unpushed")
+    with pytest.raises(ValueError, match="HEAD must match"):
+        recreate_release_tag(repo, TAG)

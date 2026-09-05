@@ -7,6 +7,12 @@ notes before a matching `vMAJOR.MINOR.PATCH` tag can publish.
 
 ## [Unreleased]
 
+### Added
+
+- `python -m scripts.recreate_release_tag` validates release metadata, then
+  pushes an annotated tag at `origin/main` (and replaces a leftover tag only
+  with `--replace-existing`).
+
 ### Fixed
 
 - First-release publishing now parses the full GraphQL response to distinguish

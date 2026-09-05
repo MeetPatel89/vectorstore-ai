@@ -106,7 +106,22 @@ The Package job contains the full wheel/extras/source smoke and demo loop.
 
 3. An authorized maintainer creates an annotated `v0.2.0` tag at that commit and
    pushes that tag. Do not tag a feature branch, move an existing tag, or use
-   `workflow_dispatch` as a substitute for the tag push.
+   `workflow_dispatch` as a substitute for the tag push. The helper below runs
+   the same metadata check, requires a clean tree whose `HEAD` matches
+   `origin/main`, then pushes an annotated tag. If the tag already exists
+   (for example a failed first attempt), pass `--replace-existing` only after
+   confirming nobody installed from it and no GitHub Release consumed it:
+
+   ```bash
+   uv run --isolated --no-project --python 3.14 python -m scripts.recreate_release_tag v0.2.0
+   uv run --isolated --no-project --python 3.14 python -m scripts.recreate_release_tag v0.2.0 --dry-run --replace-existing
+   uv run --isolated --no-project --python 3.14 python -m scripts.recreate_release_tag v0.2.0 --replace-existing
+   ```
+
+   A Git alias is optional; keep the `uv` invocation in the alias rather than
+   duplicating git commands, for example
+   `recreate-release-tag = "!uv run --isolated --no-project --python 3.14 python -m scripts.recreate_release_tag"`.
+   Tag rulesets may still reject remote deletion.
 4. Tag CI repeats all checks and requires exact agreement between tag, package
    version, dated changelog notes, and `main` ancestry. Only then does the
    release job publish the wheel, source archive, and `SHA256SUMS`, with the

@@ -11,6 +11,9 @@ wheels/
 .env
 .env.local
 
+# vs code settings
+.vscode/
+
 # Local vector databases
 .chroma/
 .faiss/
