@@ -7,6 +7,12 @@ notes before a matching `vMAJOR.MINOR.PATCH` tag can publish.
 
 ## [Unreleased]
 
+### Fixed
+
+- First-release publishing now parses the full GraphQL response to distinguish
+  a missing release from malformed responses and API failures, without relying
+  on GitHub CLI's null-scalar formatting.
+
 ## [0.1.0] - 2026-09-05
 
 ### Added

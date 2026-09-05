@@ -45,29 +45,41 @@ class GitHubReleaseClient:
             # REST's tag lookup does not find pending draft tags. Resolve the
             # draft through GraphQL, then fetch the same REST asset shape.
             owner, name = self.repository.split("/")
-            release_id = (
-                self._run(
-                    "api",
-                    "graphql",
-                    "-f",
-                    "query=query($owner:String!,$name:String!,$tag:String!) { "
-                    "repository(owner:$owner,name:$name) { "
-                    "release(tagName:$tag) { databaseId } } }",
-                    "-F",
-                    f"owner={owner}",
-                    "-F",
-                    f"name={name}",
-                    "-F",
-                    f"tag={tag}",
-                    "--jq",
-                    ".data.repository.release.databaseId",
-                )
-                .decode()
-                .strip()
+            response = self._run(
+                "api",
+                "graphql",
+                "-f",
+                "query=query($owner:String!,$name:String!,$tag:String!) { "
+                "repository(owner:$owner,name:$name) { "
+                "release(tagName:$tag) { databaseId } } }",
+                "-F",
+                f"owner={owner}",
+                "-F",
+                f"name={name}",
+                "-F",
+                f"tag={tag}",
             )
-            if release_id == "null":
+            # Parse JSON directly: gh --jq renders a null scalar as a blank
+            # line, losing the distinction between null and invalid output.
+            try:
+                payload = json.loads(response)
+            except (json.JSONDecodeError, UnicodeDecodeError) as error:
+                raise ValueError(
+                    "GitHub returned invalid release lookup JSON"
+                ) from error
+            if not isinstance(payload, dict) or payload.get("errors"):
+                raise ValueError("GitHub returned an invalid release lookup response")
+            data = payload.get("data")
+            repository = data.get("repository") if isinstance(data, dict) else None
+            if not isinstance(repository, dict) or "release" not in repository:
+                raise ValueError("GitHub returned an invalid release lookup response")
+            release = repository["release"]
+            if release is None:
                 return None
-            if not release_id.isdecimal():
+            release_id = (
+                release.get("databaseId") if isinstance(release, dict) else None
+            )
+            if type(release_id) is not int or release_id <= 0:
                 raise ValueError("GitHub returned an invalid draft release ID")
             result = self._run("api", f"repos/{self.repository}/releases/{release_id}")
         return cast(dict[str, Any], json.loads(result))

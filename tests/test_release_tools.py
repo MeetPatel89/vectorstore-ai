@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from hashlib import sha256
 from pathlib import Path
@@ -198,7 +199,9 @@ def test_client_looks_up_drafts_when_rest_tag_is_missing(
         if arguments[1].endswith(f"/tags/{TAG}"):
             raise CalledProcessError(1, arguments, stderr=b"gh: Not Found (HTTP 404)")
         if arguments[1] == "graphql":
-            return b"42\n" if draft_exists else b"null\n"
+            assert "--jq" not in arguments
+            release = {"databaseId": 42} if draft_exists else None
+            return json.dumps({"data": {"repository": {"release": release}}}).encode()
         assert arguments == ("api", "repos/owner/repository/releases/42")
         return b'{"draft": true, "body": "notes", "assets": []}'
 
@@ -206,6 +209,84 @@ def test_client_looks_up_drafts_when_rest_tag_is_missing(
     result = GitHubReleaseClient("owner/repository").release(TAG)
     assert (result is not None) == draft_exists
     assert len(calls) == (3 if draft_exists else 2)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        b"",
+        b"\n",
+        b"not JSON",
+        b"\xff",
+        b"null",
+        b"[]",
+        b"{}",
+        b'{"data": null}',
+        b'{"data": {"repository": null}}',
+        b'{"data": {"repository": {}}}',
+        b'{"errors": [{"message": "Forbidden"}], '
+        b'"data": {"repository": {"release": null}}}',
+    ],
+)
+def test_client_rejects_invalid_release_lookup_responses(
+    monkeypatch: pytest.MonkeyPatch, response: bytes
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def command(*arguments: str) -> bytes:
+        calls.append(arguments)
+        if len(calls) == 1:
+            raise CalledProcessError(1, arguments, stderr=b"gh: Not Found (HTTP 404)")
+        assert arguments[1] == "graphql"
+        return response
+
+    monkeypatch.setattr(GitHubReleaseClient, "_run", staticmethod(command))
+    with pytest.raises(ValueError, match="release lookup"):
+        GitHubReleaseClient("owner/repository").release(TAG)
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize(
+    "release",
+    [
+        {},
+        [],
+        "42",
+        *({"databaseId": value} for value in (None, True, False, 0, -1, 42.5, "42")),
+    ],
+)
+def test_client_rejects_invalid_draft_release_ids(
+    monkeypatch: pytest.MonkeyPatch, release: object
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def command(*arguments: str) -> bytes:
+        calls.append(arguments)
+        if len(calls) == 1:
+            raise CalledProcessError(1, arguments, stderr=b"gh: Not Found (HTTP 404)")
+        assert arguments[1] == "graphql"
+        return json.dumps({"data": {"repository": {"release": release}}}).encode()
+
+    monkeypatch.setattr(GitHubReleaseClient, "_run", staticmethod(command))
+    with pytest.raises(ValueError, match="invalid draft release ID"):
+        GitHubReleaseClient("owner/repository").release(TAG)
+    assert len(calls) == 2
+
+
+def test_client_propagates_graphql_api_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failure = CalledProcessError(1, ["gh", "api", "graphql"], stderr=b"Forbidden")
+
+    def command(*arguments: str) -> bytes:
+        if arguments[1] == "graphql":
+            raise failure
+        raise CalledProcessError(1, arguments, stderr=b"gh: Not Found (HTTP 404)")
+
+    monkeypatch.setattr(GitHubReleaseClient, "_run", staticmethod(command))
+    with pytest.raises(CalledProcessError) as caught:
+        GitHubReleaseClient("owner/repository").release(TAG)
+    assert caught.value is failure
 
 
 def test_client_does_not_treat_api_failure_as_missing(
