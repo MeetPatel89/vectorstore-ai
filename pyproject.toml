@@ -58,7 +58,7 @@ dev = [
     "ty>=0.0.69",
 ]
 backend-test = ["opentelemetry-sdk>=1.30"]
-build = ["hatchling>=1.32,<2", "twine>=6.2,<7"]
+build = ["hatchling>=1.32,<2", "twine>=6.2,<8"]
 
 [build-system]
 requires = ["hatchling>=1.32,<2"]
