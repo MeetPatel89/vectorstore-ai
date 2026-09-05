@@ -7,6 +7,8 @@ notes before a matching `vMAJOR.MINOR.PATCH` tag can publish.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-05
+
 ### Added
 
 - Structured, dense, lexical, and hybrid retrieval; SQLite, PostgreSQL, and
@@ -26,6 +28,3 @@ notes before a matching `vMAJOR.MINOR.PATCH` tag can publish.
 - Test, backend-test, and build tools have separate locked dependency groups.
 - Source archives explicitly exclude local data, notebooks, editor settings,
   credentials, and planning documents.
-
-No release date or `0.2.0` release entry is claimed yet. Prepare that entry and
-the version bump together in a later release PR; see [RELEASING](docs/RELEASING.md).
