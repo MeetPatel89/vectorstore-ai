@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from argparse import ArgumentParser
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from _corpus import LoadedDocument, load_documents
+from _corpus import LoadedDocument, add_corpus_argument, load_documents
 
 from vectorstore import (
     CatalogChunk,
@@ -31,7 +32,10 @@ DEMO_SPEC = EmbeddingSpec(
 
 def main() -> int:
     """Run the Phase 3 document-catalog walkthrough."""
-    loaded = load_documents()
+    parser = ArgumentParser(description=__doc__)
+    add_corpus_argument(parser)
+    args = parser.parse_args()
+    loaded = load_documents(args.corpus)
     documents = [document for document, _, _ in loaded]
     chunks = [chunk for _, document_chunks, _ in loaded for chunk in document_chunks]
 
@@ -115,7 +119,9 @@ def _show_embedding_lifecycle(
     after_indexing = catalog.stale_chunk_ids(DEMO_SPEC)
     print(f"After marking current vectors: {len(after_indexing)} stale chunks")
 
-    original = next(chunk for chunk in chunks if chunk.doc_id == "INC-1104")
+    original = next(
+        (chunk for chunk in chunks if chunk.doc_id == "INC-1104"), chunks[0]
+    )
     edited = CatalogChunk(
         chunk_id=original.chunk_id,
         doc_id=original.doc_id,

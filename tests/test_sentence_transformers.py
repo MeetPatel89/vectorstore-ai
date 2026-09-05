@@ -9,9 +9,7 @@ import math
 
 import pytest
 
-st = pytest.importorskip("sentence_transformers")
-
-from vectorstore import SentenceTransformerEmbedding  # noqa: E402
+from vectorstore import SentenceTransformerEmbedding
 
 
 class TestSpec:
@@ -54,7 +52,8 @@ class TestSpec:
 
 @pytest.fixture(scope="module")
 def provider() -> SentenceTransformerEmbedding:
-    return SentenceTransformerEmbedding()
+    pytest.importorskip("sentence_transformers")
+    return SentenceTransformerEmbedding(device="cpu")
 
 
 @pytest.mark.local_model

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from _corpus import load_documents, to_vector_chunks
+from _corpus import add_corpus_argument, load_documents, to_vector_chunks
 from _providers import HashEmbedding, make_embedder
 
 from vectorstore import (
@@ -27,6 +27,7 @@ SIMULATED_RATE_USD_PER_MILLION = 1.0
 def parse_args() -> argparse.Namespace:
     """Parse command-line options for the provider-routing walkthrough."""
     parser = argparse.ArgumentParser(description=__doc__)
+    add_corpus_argument(parser)
     parser.add_argument(
         "--provider",
         choices=("hash", "openai", "local"),
@@ -99,6 +100,7 @@ def main() -> int:
     _show_separate_spaces(
         primary,
         fallback,
+        corpus=args.corpus,
         primary_selection=normal,
         fallback_selection=over_budget,
     )
@@ -121,11 +123,12 @@ def _show_separate_spaces(
     primary: EmbeddingProvider,
     fallback: EmbeddingProvider,
     *,
+    corpus: Path,
     primary_selection: ProviderSelection,
     fallback_selection: ProviderSelection,
 ) -> None:
     print("\nPHASE 2 — ONE STORE PER EMBEDDING SPACE")
-    chunks = to_vector_chunks(load_documents())
+    chunks = to_vector_chunks(load_documents(corpus))
     stores: dict[str, NumpyVectorStore] = {}
     for provider in (primary, fallback):
         store = NumpyVectorStore(dimension=provider.spec.dimension)

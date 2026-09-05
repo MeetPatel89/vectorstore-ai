@@ -146,7 +146,10 @@ class SentenceTransformerEmbedding(EmbeddingProvider):
 def _default_model_factory(model: str, device: str | None) -> Any:
     """Load the optional backend only when embeddings are first requested."""
     try:
-        from sentence_transformers import SentenceTransformer
+        # The model extra is exercised in the separate CPU consumer workflow.
+        from sentence_transformers import (  # ty: ignore[unresolved-import]
+            SentenceTransformer,
+        )
     except ImportError as exc:
         raise ImportError(
             "SentenceTransformerEmbedding requires the 'sentence-transformers' "

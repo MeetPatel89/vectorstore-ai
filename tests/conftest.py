@@ -65,8 +65,10 @@ def store(request: pytest.FixtureRequest, tmp_path: Path) -> VectorStore:
     if request.param == "numpy":
         return NumpyVectorStore()
     if request.param == "chroma":
+        pytest.importorskip("chromadb")
         return ChromaVectorStore(
             path=tmp_path / "chroma",
             collection_name="contract-tests",
         )
+    pytest.importorskip("faiss")
     return FaissVectorStore()

@@ -1,8 +1,9 @@
-"""Shared loader for the bundled Nautilus ITSM Markdown corpus."""
+"""Shared loader and command-line selection for the synthetic demo corpus."""
 
 from __future__ import annotations
 
 import re
+from argparse import ArgumentParser, ArgumentTypeError
 from collections.abc import Iterable
 from pathlib import Path
 from typing import TypeGuard
@@ -16,9 +17,25 @@ from vectorstore import (
     semantic_projection,
 )
 
-CORPUS_ROOT = (
-    Path(__file__).resolve().parents[1] / "data" / "corpora" / "nautilus" / "raw"
-)
+CORPUS_ROOT = Path(__file__).resolve().parent / "sample_corpus"
+
+
+def add_corpus_argument(parser: ArgumentParser) -> None:
+    """Add a validated corpus directory to a demo's command line."""
+    parser.add_argument(
+        "--corpus",
+        type=_corpus_directory,
+        default=str(CORPUS_ROOT),
+        help="Markdown corpus directory (default: bundled synthetic sample)",
+    )
+
+
+def _corpus_directory(value: str) -> Path:
+    path = Path(value).resolve()
+    if not path.is_dir() or not any(path.rglob("*.md")):
+        raise ArgumentTypeError(f"no Markdown documents found under {path}")
+    return path
+
 
 type LoadedDocument = tuple[CatalogDocument, list[CatalogChunk], Record]
 

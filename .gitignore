@@ -20,3 +20,10 @@ wheels/
 data
 *.plan.md
 notebooks/
+
+# Local validation outputs and caches
+.cache/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+reports/

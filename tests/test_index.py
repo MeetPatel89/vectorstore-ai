@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from importlib.util import find_spec
+
 import pytest
 from conftest import FakeEmbedding
 
@@ -70,7 +72,11 @@ def test_empty_index_does_not_call_embedder() -> None:
 
 def test_builtin_store_factory() -> None:
     assert isinstance(create_store("numpy", dimension=4), NumpyVectorStore)
-    assert isinstance(create_store("faiss", dimension=4), FaissVectorStore)
+    if find_spec("faiss") is None:
+        with pytest.raises(ImportError, match="'faiss' extra"):
+            create_store("faiss", dimension=4)
+    else:
+        assert isinstance(create_store("faiss", dimension=4), FaissVectorStore)
     assert isinstance(
         create_store("azure-sql", dimension=4, connection_factory=lambda: None),
         AzureSqlVectorStore,

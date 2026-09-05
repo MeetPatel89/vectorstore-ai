@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from importlib.util import find_spec
 from pathlib import Path
+
+import pytest
 
 from vectorstore import ChromaVectorStore, Chunk
 from vectorstore.stores.chroma_store import _translate_filter
+
+pytestmark = pytest.mark.skipif(find_spec("chromadb") is None, reason="chroma extra")
 
 
 def test_persistence_across_client_reopen(tmp_path: Path) -> None:

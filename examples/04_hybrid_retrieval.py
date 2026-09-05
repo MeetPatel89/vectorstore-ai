@@ -6,7 +6,7 @@ import argparse
 import sys
 from typing import Never, override
 
-from _corpus import load_documents, to_vector_chunks
+from _corpus import CORPUS_ROOT, add_corpus_argument, load_documents, to_vector_chunks
 from _providers import HashEmbedding, make_embedder
 
 from vectorstore import (
@@ -94,6 +94,7 @@ class FailingQueryEmbedding(EmbeddingProvider):
 def parse_args() -> argparse.Namespace:
     """Parse command-line options for the hybrid-retrieval walkthrough."""
     parser = argparse.ArgumentParser(description=__doc__)
+    add_corpus_argument(parser)
     parser.add_argument(
         "--provider",
         choices=("hash", "openai", "local"),
@@ -106,6 +107,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     """Run the Phase 4 hybrid-retrieval walkthrough."""
     args = parse_args()
+    using_sample = args.corpus == CORPUS_ROOT
     try:
         primary = make_embedder(args.provider)
     except (ImportError, ValueError) as exc:
@@ -115,7 +117,7 @@ def main() -> int:
         return 2
 
     fallback = HashEmbedding(dimension=96, model="blake2b-bow-fallback")
-    loaded = load_documents()
+    loaded = load_documents(args.corpus)
     catalog_documents = [document for document, _, _ in loaded]
     catalog_chunks = [
         chunk for _, document_chunks, _ in loaded for chunk in document_chunks
@@ -158,7 +160,9 @@ def main() -> int:
             NATURAL_QUERY,
             titles,
         )
-        if natural.dense_candidates == 0 or natural.lexical_candidates == 0:
+        if using_sample and (
+            natural.dense_candidates == 0 or natural.lexical_candidates == 0
+        ):
             raise RuntimeError("natural query should receive both retrieval signals")
 
         identifier = _run_scenario(
@@ -169,8 +173,10 @@ def main() -> int:
         )
         if identifier.query_kind is not QueryKind.IDENTIFIER:
             raise RuntimeError("expected the analyzer to classify INC-1104")
-        if args.provider == "hash" and (
-            not identifier.hits or identifier.hits[0].chunk.doc_id != "INC-1104"
+        if (
+            using_sample
+            and args.provider == "hash"
+            and (not identifier.hits or identifier.hits[0].chunk.doc_id != "INC-1104")
         ):
             raise RuntimeError("expected the exact-match document to rank first")
 
@@ -181,7 +187,7 @@ def main() -> int:
             titles,
             scope=RetrievalScope(visibility=("customer_safe",)),
         )
-        if len(scoped.hits) >= len(natural.hits):
+        if using_sample and len(scoped.hits) >= len(natural.hits):
             raise RuntimeError("expected restrictive scope to return fewer hits")
         print(
             f"  Scope reduced the fused result set from {len(natural.hits)} "
@@ -202,7 +208,9 @@ def main() -> int:
             NATURAL_QUERY,
             titles,
         )
-        if not degraded.degraded or not degraded.errors or not degraded.hits:
+        if using_sample and (
+            not degraded.degraded or not degraded.errors or not degraded.hits
+        ):
             raise RuntimeError("expected a successful, degraded lexical result")
 
     return 0

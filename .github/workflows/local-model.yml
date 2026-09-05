@@ -1,0 +1,52 @@
+name: Local model (CPU)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-model-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  UV_NO_PROGRESS: "1"
+  ANONYMIZED_TELEMETRY: "False"
+
+jobs:
+  local-model:
+    name: MiniLM on CPU
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.10"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv python install
+      - name: Install the local extra as a consumer using CPU wheels
+        run: |
+          uv venv --python 3.14
+          uv pip install --torch-backend cpu --group test ".[local]"
+      - name: Download the model before the offline test
+        run: uv run --no-sync python -c 'from sentence_transformers import SentenceTransformer; SentenceTransformer("all-MiniLM-L6-v2", device="cpu")'
+      - name: Exercise the cached real model
+        env:
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: >-
+          uv run --no-sync pytest tests/test_sentence_transformers.py -m local_model
+          --disable-socket --allow-unix-socket --junitxml=reports/local-model.xml
+      - name: Save model test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: local-model-${{ github.run_attempt }}
+          path: reports/*.xml
+          if-no-files-found: ignore
+          retention-days: 7

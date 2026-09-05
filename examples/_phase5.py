@@ -6,6 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from _corpus import add_corpus_argument
 from _providers import HashEmbedding, make_embedder
 
 from vectorstore import (
@@ -20,14 +21,11 @@ from vectorstore import (
     build_retriever,
 )
 
-CORPUS_ROOT = (
-    Path(__file__).resolve().parents[1] / "data" / "corpora" / "nautilus" / "raw"
-)
-
 
 def parse_args() -> argparse.Namespace:
     """Parse provider selection for the ingestion demonstration."""
     parser = argparse.ArgumentParser(description=__doc__)
+    add_corpus_argument(parser)
     parser.add_argument(
         "--provider",
         choices=("hash", "openai", "local"),
@@ -41,6 +39,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     """Ingest the bundled Markdown corpus and exercise the hybrid stack."""
     args = parse_args()
+    corpus_root: Path = args.corpus
     if args.k <= 0:
         print("--k must be greater than zero", file=sys.stderr)
         return 2
@@ -62,7 +61,7 @@ def main() -> int:
     chunker = MarkdownSectionChunker(max_words=300, overlap_words=30)
 
     print("PHASE 5 — SOURCE ADAPTER → CHUNKS → CATALOG + DENSE SPACES")
-    print(f"  Corpus: {CORPUS_ROOT}")
+    print(f"  Corpus: {corpus_root}")
     print(f"  Primary space:  {primary.spec.space_id}")
     print(f"  Fallback space: {fallback.spec.space_id}")
 
@@ -74,8 +73,8 @@ def main() -> int:
             chunker=chunker,
         )
         try:
-            first = pipeline.ingest_source(adapter, CORPUS_ROOT)
-            second = pipeline.ingest_source(adapter, CORPUS_ROOT)
+            first = pipeline.ingest_source(adapter, corpus_root)
+            second = pipeline.ingest_source(adapter, corpus_root)
         except Exception as exc:  # noqa: BLE001 - make provider setup actionable
             print(f"Ingestion failed: {exc}", file=sys.stderr)
             return 2
@@ -89,7 +88,7 @@ def main() -> int:
             f"{second.skipped_embedding_count} current vectors skipped"
         )
 
-        records = list(adapter.iter_records(CORPUS_ROOT))
+        records = list(adapter.iter_records(corpus_root))
         sample = chunker.chunk(records[0])[0]
         catalog.upsert_chunks(
             [

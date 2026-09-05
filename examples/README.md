@@ -1,8 +1,22 @@
 # Retrieval demos
 
 These scripts walk through the retrieval subsystem one implemented phase at a
-time using the bundled Nautilus ITSM corpus. They default to a deterministic
+time using six synthetic ITSM documents in `examples/sample_corpus/`, shipped
+in the source archive. They default to a deterministic
 hash-based embedder, so they need no API key, network access, or model download.
+
+Use `uv sync --locked` first (dotenv is a development dependency for demos).
+Every script and `main.py` accepts `--corpus PATH` to recursively read your own
+Markdown directory. Phase 1–4's walkthrough loader expects `doc_id` and `title`
+frontmatter; use the sample documents as a template. The fixed example queries
+may return no hits for unrelated corpora. Phase 4's sample-specific ranking
+assertions are only enabled for the bundled corpus; scope enforcement itself
+is unchanged. A missing directory or one without Markdown files is an argument
+error. No private/local dataset is included in distributions.
+
+```bash
+uv run python examples/04_hybrid_retrieval.py --corpus /path/to/corpus
+```
 
 ## Phase 1: dense search and embedding spaces
 

@@ -36,28 +36,46 @@ The package is pre-1.0 (`0.1.0`). Structured retrieval, SQLite, PostgreSQL,
 and Azure SQL full-text catalogs, four dense stores, embedding-provider routing
 and budgets, hybrid RRF retrieval, Markdown/CSV/JSON ingestion, section and
 generic chunking, embedding lifecycle repair, dependency-free retrieval
-observation, and optional OpenTelemetry tracing are implemented. Release and
-downstream-application migration remain roadmap work.
+observation, and optional OpenTelemetry tracing are implemented. CI and GitHub
+Release automation are configured; the first automated release and downstream
+application migration remain separate maintainer steps. See
+[release management](docs/RELEASING.md) and the [changelog](CHANGELOG.md).
 
 ## Install
 
-Python 3.14 and [uv](https://docs.astral.sh/uv/) are required. The core
-install ships the NumPy store and OpenAI embeddings:
+Python 3.14 is the tested baseline (Linux/Ubuntu 24.04). The distribution is
+named `vectorstore-ai`; the Python import is `vectorstore`. It is not published
+to PyPI by this repository's automation. Consumers can install a wheel from
+[GitHub Releases](https://github.com/MeetPatel89/vectorstore-ai/releases) once
+available, or use a Git commit/tag as described in
+[release management](docs/RELEASING.md).
+
+For development, clone this repository and use
+[uv](https://docs.astral.sh/uv/) (CI pins `0.12.10`):
 
 ```bash
-uv sync
+uv sync --locked
 ```
+
+This includes the development dependency group. A core-only install uses
+`uv sync --locked --no-dev`: NumPy, OpenAI, and tiktoken, with SQLite from the
+standard library. Test, lint, build, dotenv, and optional backend/model tools
+are not core requirements. The package includes `py.typed` for type checkers.
 
 The other backends and integrations are optional extras:
 
 ```bash
-uv sync --extra chroma      # ChromaVectorStore
-uv sync --extra faiss       # FaissVectorStore
-uv sync --extra azure-sql   # AzureSqlVectorStore + AzureSqlDocumentCatalog
-uv sync --extra local       # SentenceTransformerEmbedding (torch + sentence-transformers)
-uv sync --extra otel        # OTelRetrievalObserver (API only; app owns SDK/exporters)
-uv sync --extra postgres    # PostgresDocumentCatalog (Psycopg 3)
+uv sync --locked --extra chroma      # ChromaVectorStore
+uv sync --locked --extra faiss       # FaissVectorStore
+uv sync --locked --extra azure-sql   # Azure SQL store + catalog
+uv sync --locked --extra local      # torch + sentence-transformers (large install)
+uv sync --locked --extra otel       # tracing API; app owns SDK/exporters
+uv sync --locked --extra postgres   # PostgresDocumentCatalog (Psycopg 3)
 ```
+
+Repeat `--extra` flags to combine integrations. Azure SQL's Linux driver also
+needs system libraries; see [contributor setup](CONTRIBUTING.md). For a smaller
+CPU-only model test environment, use the separate instructions there.
 
 For OpenAI embeddings, export an API key:
 
@@ -576,17 +594,22 @@ not exported because they may contain sensitive request or connection details.
 
 ## Tests
 
-The default offline suite uses deterministic local embeddings and makes no API
-calls:
+The unit/contract suite uses deterministic embeddings. Download the tokenizer
+asset once, then explicitly block Python network sockets during tests:
 
 ```bash
-uv run pytest -m "not local_model"
+uv sync --locked
+uv run --no-sync python -c 'from tiktoken import get_encoding; get_encoding("cl100k_base")'
+uv run --no-sync pytest -m "not local_model and not postgres_integration" --disable-socket --allow-unix-socket
 ```
 
-Tests marked `local_model` load the real MiniLM model; they skip
-automatically unless the `local` extra is installed. With that extra and the
-model available locally (or with network access for its first download), run
-the complete suite with `uv run pytest`.
+CI requires quality checks (Ruff, ty, mypy, actionlint), separate core/backend
+test environments, real PostgreSQL 18 integration tests, and wheel/source
+build and consumer smoke tests. The aggregate `CI` check is intended for branch
+protection. The manually dispatched **Local model (CPU)** workflow tests real
+MiniLM separately and does not gate PRs or releases. Azure SQL currently has
+mocked contract tests and a real driver import check, not a live Azure service
+test. See [CONTRIBUTING.md](CONTRIBUTING.md) for exact commands and test tiers.
 
 ## Demo
 
@@ -612,8 +635,12 @@ repairs one simulated stale chunk, and runs hybrid searches:
 uv run python main.py
 ```
 
-It defaults to the deterministic hash provider and is fully offline. Opt into
-a real provider with:
+All demos default to six synthetic Markdown documents in
+`examples/sample_corpus/`, included in the source distribution. No private or
+untracked corpus is needed. Supply your own Markdown corpus with
+`--corpus /path/to/corpus` on any demo (see the
+[input requirements](examples/README.md)). The deterministic hash provider is
+fully offline. Opt into a real provider with:
 
 ```bash
 uv run python main.py --provider openai
@@ -622,3 +649,10 @@ uv run python main.py --provider local
 
 The OpenAI option requires `OPENAI_API_KEY`; the local option requires the
 `local` extra and may download its model the first time it runs.
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and validation,
+[SECURITY.md](SECURITY.md) for private vulnerability reporting, and
+[release management](docs/RELEASING.md) for maintainer setup and the release
+checklist. Distributed under the [MIT license](LICENSE).

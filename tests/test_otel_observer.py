@@ -3,6 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+
+pytest.importorskip("opentelemetry.sdk")
+
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (

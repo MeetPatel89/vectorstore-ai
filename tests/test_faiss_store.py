@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
 
 from vectorstore import Chunk, FaissVectorStore
+
+pytestmark = pytest.mark.skipif(find_spec("faiss") is None, reason="faiss extra")
 
 
 def test_save_load_round_trip(tmp_path: Path) -> None:

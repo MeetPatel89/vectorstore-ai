@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from _corpus import load_documents, to_vector_chunks
+from _corpus import add_corpus_argument, load_documents, to_vector_chunks
 from _providers import HashEmbedding, make_embedder
 
 from vectorstore import NumpyVectorStore, VectorIndex, semantic_projection
@@ -20,6 +20,7 @@ SAMPLE_QUERIES = (
 def parse_args() -> argparse.Namespace:
     """Parse command-line options for the dense-search walkthrough."""
     parser = argparse.ArgumentParser(description=__doc__)
+    add_corpus_argument(parser)
     parser.add_argument(
         "--provider",
         choices=("hash", "openai", "local"),
@@ -41,7 +42,7 @@ def main() -> int:
         )
         return 2
 
-    documents = load_documents()
+    documents = load_documents(args.corpus)
     chunks = to_vector_chunks(documents)
     for item in documents:
         if item[0].doc_id == "INC-1104":
@@ -49,14 +50,14 @@ def main() -> int:
             print(item)
             print("--------------------------------")
     _, sample_chunks, sample_record = next(
-        item for item in documents if item[0].doc_id == "INC-1104"
+        (item for item in documents if item[0].doc_id == "INC-1104"), documents[0]
     )
 
     print("PHASE 1 — SEMANTIC PROJECTION")
     print(f"Record: {sample_record.id} ({sample_record.source})")
     print("Structured metadata excluded from the projection:")
     for key in ("doc_id", "doc_type", "owner_group", "visibility", "status"):
-        print(f"  {key}: {sample_record.structured[key]}")
+        print(f"  {key}: {sample_record.structured.get(key, '(not supplied)')}")
     print("\nProjection preview (the document is sectioned before indexing):")
     _print_preview(semantic_projection(sample_record))
     print(f"\nFirst embedded section ({sample_chunks[0].chunk_id}):")
